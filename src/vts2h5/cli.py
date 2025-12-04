@@ -3,9 +3,8 @@
 import argparse
 import sys
 from pathlib import Path
-from typing import List, Tuple, Dict, Any, Optional
+from typing import List
 import re
-from multiprocessing import Pool, cpu_count
 
 
 def parse_args():
@@ -146,42 +145,10 @@ def find_vts_files(folder: Path) -> List[Path]:
     return files
 
 
-def read_vts_file_worker(filepath: str) -> Tuple[dict, int]:
-    """
-    Worker function to read a VTS file in parallel with validation.
-    
-    Args:
-        filepath: Path to VTS file
-        
-    Returns:
-        Tuple of (grid_data, file_size)
-        
-    Raises:
-        Exception with descriptive message if file is corrupted or invalid
-    """
-    from vts2h5.reader import VTSReader
-    from pathlib import Path
-    import xml.etree.ElementTree as ET
-    
-    # Validate XML structure
-    try:
-        ET.parse(filepath)
-    except ET.ParseError as e:
-        raise ValueError(f"Corrupted XML in {Path(filepath).name}: {str(e)}")
-    
-    # Read VTS file
-    try:
-        reader = VTSReader(filepath)
-        grid_data = reader.read()
-        file_size = Path(filepath).stat().st_size
-        return grid_data, file_size
-    except Exception as e:
-        raise ValueError(f"Failed to read {Path(filepath).name}: {str(e)}")
-
-
 def display_folder_info(folder: Path) -> None:
     """Display information about VTS files in a folder as a time series."""
     from vts2h5.reader import VTSReader
+    from vts2h5.converter import extract_time_steps
     
     files = find_vts_files(folder)
     
@@ -194,13 +161,7 @@ def display_folder_info(folder: Path) -> None:
         info = reader.get_info()
         
         # Extract time steps from filenames
-        time_steps = []
-        for i, f in enumerate(files):
-            match = re.search(r'step[_\s]*(\d+)', f.stem)
-            if match:
-                time_steps.append(int(match.group(1)))
-            else:
-                time_steps.append(i)
+        time_steps = extract_time_steps(files)
         
         # Calculate total original size
         total_size = sum(f.stat().st_size for f in files)
@@ -233,176 +194,49 @@ def convert_folder(
     compression_level: int,
     silent: bool,
     verbose: bool,
-    jobs: int = 1,
+    jobs: int = 0,
 ) -> None:
     """Convert all VTS files in a folder to HDF5 as a time series."""
-    from tqdm import tqdm
-    from vts2h5.reader import VTSReader
-    from vts2h5.writer import HDF5Writer
-    from vts2h5.xdmf import XDMFGenerator
+    from vts2h5.converter import convert_vts_to_hdf5
     
-    try:
-        comp = None if compression == "none" else compression
-        writer = HDF5Writer(str(output_file), compression=comp, compression_opts=compression_level)
-
-        total_original_size = 0
-        first_grid_data = None
-        first_grid_info = None
+    # Call the converter
+    stats = convert_vts_to_hdf5(
+        input_files=input_files,
+        output_file=output_file,
+        xdmf_output=xdmf_output,
+        compression=compression,
+        compression_level=compression_level,
+        jobs=jobs,
+        silent=silent,
+        verbose=verbose,
+    )
+    
+    # Display results
+    if silent:
+        return
+    
+    if not verbose:
+        print(f"\nH5:     {output_file}")
+        print(f"XDMF:   {xdmf_output}")
+    else:
+        print(f"\n✓ Conversion complete!")
         
-        # Extract time steps from filenames
-        time_steps = []
-        for i, f in enumerate(input_files):
-            match = re.search(r'step[_\s]*(\d+)', f.stem)
-            if match:
-                time_steps.append(int(match.group(1)))
-            else:
-                # Use file index if no step number found
-                time_steps.append(i)
-
-        # Determine number of processes
-        if jobs == 0:
-            num_jobs = cpu_count()
-        else:
-            num_jobs = max(1, jobs)
+        if stats['grid_info']:
+            grid_info = stats['grid_info']
+            print(f"\nGrid Information:")
+            print(f"  Dimensions:    {grid_info['dimensions']}")
+            print(f"  Points:        {grid_info['num_points']:,}")
+            print(f"  Cells:         {grid_info['num_cells']:,}")
+            if grid_info['point_arrays']:
+                print(f"  Point arrays:  {', '.join(grid_info['point_arrays'])}")
         
-        use_multiprocessing = num_jobs > 1 and len(input_files) > 1
-        
-        if use_multiprocessing and not silent:
-            print(f"Reading {len(input_files)} VTS files with {num_jobs} parallel workers...")
-        
-        # Read VTS files (parallel if jobs > 1)
-        if use_multiprocessing:
-            file_paths = [str(f) for f in input_files]
-            
-            try:
-                with Pool(processes=num_jobs) as pool:
-                    if silent:
-                        results = pool.map(read_vts_file_worker, file_paths)
-                    else:
-                        results = list(tqdm(
-                            pool.imap(read_vts_file_worker, file_paths),
-                            total=len(file_paths),
-                            desc="Reading files",
-                            unit="file"
-                        ))
-            except Exception as e:
-                print(f"\n✗ Error reading files: {e}", file=sys.stderr)
-                print("Conversion aborted. No files were written.", file=sys.stderr)
-                sys.exit(1)
-            
-            # Unpack results and validate consistency
-            grid_data_list = [r[0] for r in results]
-            file_sizes = [r[1] for r in results]
-            total_original_size = sum(file_sizes)
-            
-            first_grid_data = grid_data_list[0]
-            reference_dims = first_grid_data['dimensions']
-            
-            # Validate all files have same dimensions
-            for i, grid_data in enumerate(grid_data_list[1:], 1):
-                if grid_data['dimensions'] != reference_dims:
-                    print(f"\n✗ Dimension mismatch in {input_files[i].name}!", file=sys.stderr)
-                    print(f"  Expected: {reference_dims}, Got: {grid_data['dimensions']}", file=sys.stderr)
-                    print("Conversion aborted. No files were written.", file=sys.stderr)
-                    sys.exit(1)
-            
-            if verbose:
-                reader = VTSReader(str(input_files[0]))
-                first_grid_info = reader.get_info()
-            
-            # Write to HDF5 (sequential, HDF5 is not thread-safe)
-            if not silent:
-                print("Writing to HDF5...")
-            
-            iterator = enumerate(grid_data_list)
-            if not silent:
-                iterator = tqdm(iterator, total=len(grid_data_list), desc="Writing to HDF5", unit="file")
-            
-            for i, grid_data in iterator:
-                writer.write(grid_data, time_step=time_steps[i])
-        
-        else:
-            # Sequential processing (original behavior)
-            iterator = input_files if silent else tqdm(input_files, desc="Converting files", unit="file")
-            reference_dims = None
-            
-            try:
-                for i, input_file in enumerate(iterator):
-                    reader = VTSReader(str(input_file))
-                    grid_data = reader.read()
-
-                    if i == 0:
-                        first_grid_data = grid_data
-                        reference_dims = grid_data['dimensions']
-                        if verbose:
-                            first_grid_info = reader.get_info()
-                    else:
-                        # Validate dimensions consistency
-                        if grid_data['dimensions'] != reference_dims:
-                            print(f"\n✗ Dimension mismatch in {input_file.name}!", file=sys.stderr)
-                            print(f"  Expected: {reference_dims}, Got: {grid_data['dimensions']}", file=sys.stderr)
-                            print("Conversion aborted. Cleaning up partial output...", file=sys.stderr)
-                            writer.close()
-                            output_file.unlink(missing_ok=True)
-                            sys.exit(1)
-
-                    writer.write(grid_data, time_step=time_steps[i])
-                    total_original_size += input_file.stat().st_size
-            
-            except Exception as e:
-                print(f"\n✗ Error reading {input_file.name}: {e}", file=sys.stderr)
-                print("Conversion aborted. Cleaning up partial output...", file=sys.stderr)
-                writer.close()
-                output_file.unlink(missing_ok=True)
-                sys.exit(1)
-
-        writer.close()
-
-        if first_grid_data:
-            if not silent:
-                print("Generating XDMF2 descriptor...")
-
-            XDMFGenerator.generate_temporal_collection(
-                str(output_file),
-                str(xdmf_output),
-                time_steps=time_steps,
-                time_values=[float(s) for s in time_steps],
-                dimensions=first_grid_data["dimensions"],
-                point_arrays=list(first_grid_data["point_data"].keys()),
-                cell_arrays=list(first_grid_data["cell_data"].keys()),
-            )
-
-        # Report file sizes
-        converted_size = output_file.stat().st_size
-        ratio = (1 - converted_size / total_original_size) * 100
-
-        if silent:
-            print(f"H5:     {output_file}")
-            print(f"XDMF:   {xdmf_output}")
-        elif verbose:
-            print(f"\n✓ Conversion complete!")
-            if first_grid_info:
-                print(f"\nGrid Information:")
-                print(f"  Dimensions:    {first_grid_info['dimensions']}")
-                print(f"  Points:        {first_grid_info['num_points']:,}")
-                print(f"  Cells:         {first_grid_info['num_cells']:,}")
-                print(f"  Point arrays:  {', '.join(first_grid_info['point_arrays'])}")
-                if first_grid_info['cell_arrays']:
-                    print(f"  Cell arrays:   {', '.join(first_grid_info['cell_arrays'])}")
-            print(f"\nOutput:")
-            print(f"  H5 file:       {output_file}")
-            print(f"  XDMF file:     {xdmf_output}")
-            print(f"  Files:         {len(input_files)} files")
-            print(f"  Original size: {total_original_size:,} bytes")
-            print(f"  Converted:     {converted_size:,} bytes")
-            print(f"  Reduction:     {ratio:.1f}%")
-        else:
-            print(f"\nH5:     {output_file}")
-            print(f"XDMF:   {xdmf_output}")
-
-    except Exception as e:
-        print(f"Error during conversion: {e}", file=sys.stderr)
-        sys.exit(1)
+        print(f"\nOutput:")
+        print(f"  H5 file:       {output_file}")
+        print(f"  XDMF file:     {xdmf_output}")
+        print(f"  Files:         {stats['num_files']} files")
+        print(f"  Original size: {stats['total_original_size']:,} bytes")
+        print(f"  Converted:     {stats['converted_size']:,} bytes")
+        print(f"  Reduction:     {stats['reduction_ratio']:.1f}%")
 
 
 def main():

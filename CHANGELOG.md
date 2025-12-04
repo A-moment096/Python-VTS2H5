@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2025-12-04
+
+### Added
+- **Multiprocessing support** for parallel VTS file reading
+  - New `-j/--jobs N` flag to specify number of parallel workers
+  - Use `-j 0` for automatic CPU core detection
+  - Up to **4.7x speedup** on large datasets (125+ files)
+- Two-phase processing: parallel reading, sequential HDF5 writing
+- Separate progress bars for reading and writing phases in multiprocessing mode
+
+### Performance
+- Sequential (baseline): 159.88s for 125 files
+- 4 workers (`-j 4`): 58.91s - **2.7x speedup**
+- Auto cores (`-j 0`): 33.80s - **4.7x speedup**
+
+### Notes
+- Small datasets (< 10 files) may not benefit from parallelization due to overhead
+- Output files are byte-identical to sequential processing (verified via SHA256)
+
 ## [0.1.0] - 2025-12-04
 
 ### Added

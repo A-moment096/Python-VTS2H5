@@ -3,8 +3,9 @@
 import argparse
 import sys
 from pathlib import Path
-from typing import List
+from typing import List, Tuple
 import re
+from multiprocessing import Pool, cpu_count
 
 
 def parse_args():
@@ -23,17 +24,20 @@ Examples:
   # Output to a specific folder
   vts2h5 data/test1 -o results/
 
+  # Use 4 parallel workers for faster conversion
+  vts2h5 data/test1 -j 4
+
+  # Use all available CPU cores
+  vts2h5 data/test1 -j 0
+
   # Silent mode (no progress bar, minimal output)
   vts2h5 data/test1 -s
 
   # Verbose mode (show grid info and detailed stats)
   vts2h5 data/test1 -v
 
-  # Custom output name
-  vts2h5 data/test1 --output-name simulation
-
-  # Combine custom name with output folder
-  vts2h5 data/test1 --output-name simulation -o results/
+  # Custom output name with parallel processing
+  vts2h5 data/test1 --output-name simulation -j 4
 
   # Show folder info without conversion
   vts2h5 data/test1 --info
@@ -87,6 +91,15 @@ Examples:
     )
 
     parser.add_argument(
+        "-j",
+        "--jobs",
+        type=int,
+        default=1,
+        metavar="N",
+        help="Number of parallel jobs for reading VTS files (default: 1, use 0 for auto)",
+    )
+
+    parser.add_argument(
         "--info",
         action="store_true",
         help="Display folder information without conversion",
@@ -94,7 +107,7 @@ Examples:
     parser.add_argument(
         "--version",
         action="version",
-        version="%(prog)s 0.1.0",
+        version="%(prog)s 0.2.0",
     )
 
     return parser.parse_args()
@@ -133,6 +146,26 @@ def find_vts_files(folder: Path) -> List[Path]:
     return files
 
 
+def read_vts_file_worker(filepath: str) -> Tuple[dict, int]:
+    """
+    Worker function to read a VTS file in parallel.
+    
+    Args:
+        filepath: Path to VTS file
+        
+    Returns:
+        Tuple of (grid_data, file_size)
+    """
+    from vts2h5.reader import VTSReader
+    from pathlib import Path
+    
+    reader = VTSReader(filepath)
+    grid_data = reader.read()
+    file_size = Path(filepath).stat().st_size
+    
+    return grid_data, file_size
+
+
 def display_folder_info(folder: Path) -> None:
     """Display information about VTS files in a folder."""
     from vts2h5.reader import VTSReader
@@ -167,6 +200,7 @@ def convert_folder(
     compression_level: int,
     silent: bool,
     verbose: bool,
+    jobs: int = 1,
 ) -> None:
     """Convert all VTS files in a folder to HDF5 as a time series."""
     from tqdm import tqdm
@@ -192,20 +226,68 @@ def convert_folder(
                 # Use file index if no step number found
                 time_steps.append(i)
 
-        # Process files with progress bar
-        iterator = input_files if silent else tqdm(input_files, desc="Converting files", unit="file")
+        # Determine number of processes
+        if jobs == 0:
+            num_jobs = cpu_count()
+        else:
+            num_jobs = max(1, jobs)
         
-        for i, input_file in enumerate(iterator):
-            reader = VTSReader(str(input_file))
-            grid_data = reader.read()
+        use_multiprocessing = num_jobs > 1 and len(input_files) > 1
+        
+        if use_multiprocessing and not silent:
+            print(f"Reading {len(input_files)} VTS files with {num_jobs} parallel workers...")
+        
+        # Read VTS files (parallel if jobs > 1)
+        if use_multiprocessing:
+            file_paths = [str(f) for f in input_files]
+            
+            with Pool(processes=num_jobs) as pool:
+                if silent:
+                    results = pool.map(read_vts_file_worker, file_paths)
+                else:
+                    results = list(tqdm(
+                        pool.imap(read_vts_file_worker, file_paths),
+                        total=len(file_paths),
+                        desc="Reading files",
+                        unit="file"
+                    ))
+            
+            # Unpack results
+            grid_data_list = [r[0] for r in results]
+            file_sizes = [r[1] for r in results]
+            total_original_size = sum(file_sizes)
+            
+            first_grid_data = grid_data_list[0]
+            if verbose:
+                reader = VTSReader(str(input_files[0]))
+                first_grid_info = reader.get_info()
+            
+            # Write to HDF5 (sequential, HDF5 is not thread-safe)
+            if not silent:
+                print("Writing to HDF5...")
+            
+            iterator = enumerate(grid_data_list)
+            if not silent:
+                iterator = tqdm(iterator, total=len(grid_data_list), desc="Writing to HDF5", unit="file")
+            
+            for i, grid_data in iterator:
+                writer.write(grid_data, time_step=time_steps[i])
+        
+        else:
+            # Sequential processing (original behavior)
+            iterator = input_files if silent else tqdm(input_files, desc="Converting files", unit="file")
+            
+            for i, input_file in enumerate(iterator):
+                reader = VTSReader(str(input_file))
+                grid_data = reader.read()
 
-            if i == 0:
-                first_grid_data = grid_data
-                if verbose:
-                    first_grid_info = reader.get_info()
+                if i == 0:
+                    first_grid_data = grid_data
+                    if verbose:
+                        first_grid_info = reader.get_info()
 
-            writer.write(grid_data, time_step=time_steps[i])
-            total_original_size += input_file.stat().st_size
+                writer.write(grid_data, time_step=time_steps[i])
+                total_original_size += input_file.stat().st_size
 
         writer.close()
 
@@ -314,6 +396,7 @@ def main():
         args.compression_level,
         args.silent,
         args.verbose,
+        args.jobs,
     )
 
 

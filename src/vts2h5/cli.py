@@ -3,7 +3,7 @@
 import argparse
 import sys
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Any, Optional
 import re
 from multiprocessing import Pool, cpu_count
 
@@ -94,9 +94,9 @@ Examples:
         "-j",
         "--jobs",
         type=int,
-        default=1,
+        default=0,
         metavar="N",
-        help="Number of parallel jobs for reading VTS files (default: 1, use 0 for auto)",
+        help="Number of parallel jobs for reading VTS files (default: 0 for auto, use 1 for sequential)",
     )
 
     parser.add_argument(
@@ -148,48 +148,81 @@ def find_vts_files(folder: Path) -> List[Path]:
 
 def read_vts_file_worker(filepath: str) -> Tuple[dict, int]:
     """
-    Worker function to read a VTS file in parallel.
+    Worker function to read a VTS file in parallel with validation.
     
     Args:
         filepath: Path to VTS file
         
     Returns:
         Tuple of (grid_data, file_size)
+        
+    Raises:
+        Exception with descriptive message if file is corrupted or invalid
     """
     from vts2h5.reader import VTSReader
     from pathlib import Path
+    import xml.etree.ElementTree as ET
     
-    reader = VTSReader(filepath)
-    grid_data = reader.read()
-    file_size = Path(filepath).stat().st_size
+    # Validate XML structure
+    try:
+        ET.parse(filepath)
+    except ET.ParseError as e:
+        raise ValueError(f"Corrupted XML in {Path(filepath).name}: {str(e)}")
     
-    return grid_data, file_size
+    # Read VTS file
+    try:
+        reader = VTSReader(filepath)
+        grid_data = reader.read()
+        file_size = Path(filepath).stat().st_size
+        return grid_data, file_size
+    except Exception as e:
+        raise ValueError(f"Failed to read {Path(filepath).name}: {str(e)}")
 
 
 def display_folder_info(folder: Path) -> None:
-    """Display information about VTS files in a folder."""
+    """Display information about VTS files in a folder as a time series."""
     from vts2h5.reader import VTSReader
     
     files = find_vts_files(folder)
     
     print(f"\nFolder: {folder}")
-    print(f"VTS files found: {len(files)}")
-    print()
-
-    for filepath in files:
-        try:
-            reader = VTSReader(str(filepath))
-            info = reader.get_info()
-
-            print(f"  {filepath.name}:")
-            print(f"    Dimensions: {info['dimensions']}")
-            print(f"    Points: {info['num_points']:,}, Cells: {info['num_cells']:,}")
-            print(f"    Point arrays: {', '.join(info['point_arrays'][:3])}" + 
-                  (f" ... ({len(info['point_arrays'])} total)" if len(info['point_arrays']) > 3 else ""))
-            print()
-
-        except Exception as e:
-            print(f"  Error reading {filepath.name}: {e}", file=sys.stderr)
+    print(f"VTS files: {len(files)}")
+    
+    # Read first file to get grid information
+    try:
+        reader = VTSReader(str(files[0]))
+        info = reader.get_info()
+        
+        # Extract time steps from filenames
+        time_steps = []
+        for i, f in enumerate(files):
+            match = re.search(r'step[_\s]*(\d+)', f.stem)
+            if match:
+                time_steps.append(int(match.group(1)))
+            else:
+                time_steps.append(i)
+        
+        # Calculate total original size
+        total_size = sum(f.stat().st_size for f in files)
+        
+        print(f"\nTime Series Information:")
+        print(f"  Time steps:    {len(time_steps)} steps (from {min(time_steps)} to {max(time_steps)})")
+        print(f"  Total size:    {total_size:,} bytes ({total_size/1024/1024:.2f} MB)")
+        
+        print(f"\nGrid Information:")
+        print(f"  Dimensions:    {info['dimensions']}")
+        print(f"  Points:        {info['num_points']:,}")
+        print(f"  Cells:         {info['num_cells']:,}")
+        
+        if info['point_arrays']:
+            print(f"  Point arrays:  {', '.join(info['point_arrays'])}")
+        if info['cell_arrays']:
+            print(f"  Cell arrays:   {', '.join(info['cell_arrays'])}")
+        
+        print()
+        
+    except Exception as e:
+        print(f"Error reading files: {e}", file=sys.stderr)
 
 
 def convert_folder(
@@ -241,23 +274,38 @@ def convert_folder(
         if use_multiprocessing:
             file_paths = [str(f) for f in input_files]
             
-            with Pool(processes=num_jobs) as pool:
-                if silent:
-                    results = pool.map(read_vts_file_worker, file_paths)
-                else:
-                    results = list(tqdm(
-                        pool.imap(read_vts_file_worker, file_paths),
-                        total=len(file_paths),
-                        desc="Reading files",
-                        unit="file"
-                    ))
+            try:
+                with Pool(processes=num_jobs) as pool:
+                    if silent:
+                        results = pool.map(read_vts_file_worker, file_paths)
+                    else:
+                        results = list(tqdm(
+                            pool.imap(read_vts_file_worker, file_paths),
+                            total=len(file_paths),
+                            desc="Reading files",
+                            unit="file"
+                        ))
+            except Exception as e:
+                print(f"\n✗ Error reading files: {e}", file=sys.stderr)
+                print("Conversion aborted. No files were written.", file=sys.stderr)
+                sys.exit(1)
             
-            # Unpack results
+            # Unpack results and validate consistency
             grid_data_list = [r[0] for r in results]
             file_sizes = [r[1] for r in results]
             total_original_size = sum(file_sizes)
             
             first_grid_data = grid_data_list[0]
+            reference_dims = first_grid_data['dimensions']
+            
+            # Validate all files have same dimensions
+            for i, grid_data in enumerate(grid_data_list[1:], 1):
+                if grid_data['dimensions'] != reference_dims:
+                    print(f"\n✗ Dimension mismatch in {input_files[i].name}!", file=sys.stderr)
+                    print(f"  Expected: {reference_dims}, Got: {grid_data['dimensions']}", file=sys.stderr)
+                    print("Conversion aborted. No files were written.", file=sys.stderr)
+                    sys.exit(1)
+            
             if verbose:
                 reader = VTSReader(str(input_files[0]))
                 first_grid_info = reader.get_info()
@@ -276,18 +324,37 @@ def convert_folder(
         else:
             # Sequential processing (original behavior)
             iterator = input_files if silent else tqdm(input_files, desc="Converting files", unit="file")
+            reference_dims = None
             
-            for i, input_file in enumerate(iterator):
-                reader = VTSReader(str(input_file))
-                grid_data = reader.read()
+            try:
+                for i, input_file in enumerate(iterator):
+                    reader = VTSReader(str(input_file))
+                    grid_data = reader.read()
 
-                if i == 0:
-                    first_grid_data = grid_data
-                    if verbose:
-                        first_grid_info = reader.get_info()
+                    if i == 0:
+                        first_grid_data = grid_data
+                        reference_dims = grid_data['dimensions']
+                        if verbose:
+                            first_grid_info = reader.get_info()
+                    else:
+                        # Validate dimensions consistency
+                        if grid_data['dimensions'] != reference_dims:
+                            print(f"\n✗ Dimension mismatch in {input_file.name}!", file=sys.stderr)
+                            print(f"  Expected: {reference_dims}, Got: {grid_data['dimensions']}", file=sys.stderr)
+                            print("Conversion aborted. Cleaning up partial output...", file=sys.stderr)
+                            writer.close()
+                            output_file.unlink(missing_ok=True)
+                            sys.exit(1)
 
-                writer.write(grid_data, time_step=time_steps[i])
-                total_original_size += input_file.stat().st_size
+                    writer.write(grid_data, time_step=time_steps[i])
+                    total_original_size += input_file.stat().st_size
+            
+            except Exception as e:
+                print(f"\n✗ Error reading {input_file.name}: {e}", file=sys.stderr)
+                print("Conversion aborted. Cleaning up partial output...", file=sys.stderr)
+                writer.close()
+                output_file.unlink(missing_ok=True)
+                sys.exit(1)
 
         writer.close()
 

@@ -1,10 +1,11 @@
 """VTS file reader module."""
 
 from pathlib import Path
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, Tuple
 import numpy as np
 import vtk
 from vtkmodules.util import numpy_support
+import xml.etree.ElementTree as ET
 
 
 class VTSReader:
@@ -20,6 +21,31 @@ class VTSReader:
         self.filepath = Path(filepath)
         if not self.filepath.exists():
             raise FileNotFoundError(f"File not found: {filepath}")
+    
+    def validate_xml(self) -> Tuple[bool, Optional[str]]:
+        """
+        Validate that the VTS file is well-formed XML.
+        
+        Returns:
+            Tuple of (is_valid, error_message)
+        """
+        try:
+            tree = ET.parse(str(self.filepath))
+            root = tree.getroot()
+            
+            # Check if it's a VTK file
+            if root.tag != 'VTKFile':
+                return False, "Not a valid VTK file (missing VTKFile root element)"
+            
+            # Check if it's a StructuredGrid
+            if root.get('type') != 'StructuredGrid':
+                return False, f"Not a StructuredGrid file (type is {root.get('type')})"
+            
+            return True, None
+        except ET.ParseError as e:
+            return False, f"XML parse error: {str(e)}"
+        except Exception as e:
+            return False, f"Validation error: {str(e)}"
 
     def read(self) -> Dict[str, Any]:
         """

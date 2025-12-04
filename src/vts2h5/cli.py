@@ -5,11 +5,6 @@ import sys
 from pathlib import Path
 from typing import List
 import re
-from tqdm import tqdm
-
-from .reader import VTSReader
-from .writer import HDF5Writer
-from .xdmf import XDMFGenerator
 
 
 def parse_args():
@@ -140,6 +135,8 @@ def find_vts_files(folder: Path) -> List[Path]:
 
 def display_folder_info(folder: Path) -> None:
     """Display information about VTS files in a folder."""
+    from vts2h5.reader import VTSReader
+    
     files = find_vts_files(folder)
     
     print(f"\nFolder: {folder}")
@@ -172,6 +169,11 @@ def convert_folder(
     verbose: bool,
 ) -> None:
     """Convert all VTS files in a folder to HDF5 as a time series."""
+    from tqdm import tqdm
+    from vts2h5.reader import VTSReader
+    from vts2h5.writer import HDF5Writer
+    from vts2h5.xdmf import XDMFGenerator
+    
     try:
         comp = None if compression == "none" else compression
         writer = HDF5Writer(str(output_file), compression=comp, compression_opts=compression_level)

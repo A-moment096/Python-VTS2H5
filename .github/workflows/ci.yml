@@ -29,11 +29,10 @@ jobs:
     - name: Install dependencies
       run: |
         uv sync
-        uv pip install --system pytest
 
     - name: Run tests
       run: |
-        pytest tests/ --cov=vts2h5 --cov-report=xml --cov-report=term
+        uv run pytest tests/ --cov=vts2h5 --cov-report=xml --cov-report=term
 
     - name: Upload coverage
       uses: codecov/codecov-action@v4
@@ -57,16 +56,15 @@ jobs:
 
     - name: Install dependencies
       run: |
-        uv pip install --system ruff black
+        uv sync
 
     - name: Check formatting with black
       run: |
-        black --check src
+        uv run black --check src
 
     - name: Lint with ruff
       run: |
-        ruff check src
-
+        uv run ruff check src
   build:
     runs-on: ubuntu-latest
     needs: [test, lint]

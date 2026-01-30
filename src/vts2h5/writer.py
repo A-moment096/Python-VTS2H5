@@ -1,7 +1,8 @@
 """HDF5 file writer module."""
 
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Any, Optional
+
 import h5py
 import numpy as np
 
@@ -27,7 +28,8 @@ class HDF5Writer:
         """
         self.filepath = Path(filepath)
         self.compression = compression
-        self.compression_opts = compression_opts
+        # Set compression_opts to None if compression is None
+        self.compression_opts = None if compression is None else compression_opts
         self.mode = mode
         self.file: Optional[h5py.File] = None
 
@@ -41,7 +43,7 @@ class HDF5Writer:
         if self.file:
             self.file.close()
 
-    def write(self, grid_data: Dict[str, Any], time_step: Optional[int] = None) -> None:
+    def write(self, grid_data: dict[str, Any], time_step: Optional[int] = None) -> None:
         """
         Write grid data to HDF5 file.
 
@@ -57,7 +59,7 @@ class HDF5Writer:
             if "origin" not in self.file and "bounds" in grid_data:
                 bounds = grid_data["bounds"]
                 dims = grid_data["dimensions"]
-                
+
                 # Calculate origin from bounds
                 origin = np.array([bounds[0], bounds[2], bounds[4]], dtype=np.float64)
                 self.file.create_dataset(
@@ -66,13 +68,20 @@ class HDF5Writer:
                     compression=self.compression,
                     compression_opts=self.compression_opts,
                 )
-                
+
                 # Calculate spacing from bounds and dimensions
-                spacing = np.array([
-                    (bounds[1] - bounds[0]) / max(1, dims[0] - 1),
-                    (bounds[3] - bounds[2]) / max(1, dims[1] - 1),
-                    (bounds[5] - bounds[4]) / max(1, dims[2] - 1) if dims[2] > 1 else 0.0
-                ], dtype=np.float64)
+                spacing = np.array(
+                    [
+                        (bounds[1] - bounds[0]) / max(1, dims[0] - 1),
+                        (bounds[3] - bounds[2]) / max(1, dims[1] - 1),
+                        (
+                            (bounds[5] - bounds[4]) / max(1, dims[2] - 1)
+                            if dims[2] > 1
+                            else 0.0
+                        ),
+                    ],
+                    dtype=np.float64,
+                )
                 self.file.create_dataset(
                     "spacing",
                     data=spacing,
@@ -112,7 +121,7 @@ class HDF5Writer:
                         )
 
         except Exception as e:
-            raise RuntimeError(f"Failed to write HDF5 file: {e}")
+            raise RuntimeError(f"Failed to write HDF5 file: {e}") from e
 
     def close(self) -> None:
         """Close the HDF5 file."""

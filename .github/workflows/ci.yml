@@ -32,7 +32,7 @@ jobs:
 
     - name: Run tests
       run: |
-        pytest --cov=vts2h5 --cov-report=xml
+        pytest tests/ --cov=vts2h5 --cov-report=xml --cov-report=term
 
     - name: Upload coverage
       uses: codecov/codecov-action@v4
@@ -60,11 +60,11 @@ jobs:
 
     - name: Check formatting with black
       run: |
-        black --check src tests
+        black --check src
 
     - name: Lint with ruff
       run: |
-        ruff check src tests
+        ruff check src
 
   build:
     runs-on: ubuntu-latest

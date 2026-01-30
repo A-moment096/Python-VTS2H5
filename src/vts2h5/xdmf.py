@@ -1,15 +1,15 @@
 """XDMF2 file generator module."""
 
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Any, Optional
+
 from lxml import etree
-import numpy as np
 
 
 class XDMFGenerator:
     """Generator for XDMF2 descriptor files matching C++ MInDes-VTS2H5 implementation."""
 
-    def __init__(self, hdf5_filepath: str, grid_data: Optional[Dict[str, Any]] = None):
+    def __init__(self, hdf5_filepath: str, grid_data: Optional[dict[str, Any]] = None):
         """
         Initialize XDMF generator.
 
@@ -23,8 +23,8 @@ class XDMFGenerator:
     def generate(
         self,
         output_filepath: str,
-        time_steps: Optional[List[int]] = None,
-        time_values: Optional[List[float]] = None,
+        time_steps: Optional[list[int]] = None,
+        time_values: Optional[list[float]] = None,
     ) -> None:
         """
         Generate XDMF2 file using 3DRectMesh topology with ORIGIN_DXDYDZ geometry.
@@ -43,7 +43,11 @@ class XDMFGenerator:
         if time_steps is not None and len(time_steps) > 1:
             # Time series
             collection = etree.SubElement(
-                domain, "Grid", Name="TimeSeries", GridType="Collection", CollectionType="Temporal"
+                domain,
+                "Grid",
+                Name="TimeSeries",
+                GridType="Collection",
+                CollectionType="Temporal",
             )
 
             for i, step in enumerate(time_steps):
@@ -70,12 +74,14 @@ class XDMFGenerator:
 
         prefix = f"step_{time_step}/" if time_step is not None else ""
 
-        grid = etree.SubElement(parent, "Grid", Name="StructuredGrid", GridType="Uniform")
+        grid = etree.SubElement(
+            parent, "Grid", Name="StructuredGrid", GridType="Uniform"
+        )
 
         # Add topology - always use 3DRectMesh
         dims = self.grid_data["dimensions"]
         nx, ny, nz = dims[0], dims[1], dims[2]
-        topology = etree.SubElement(
+        etree.SubElement(
             grid,
             "Topology",
             TopologyType="3DRectMesh",
@@ -110,11 +116,11 @@ class XDMFGenerator:
         spacing_item.text = f"{self.hdf5_filepath.name}:/spacing"
 
         # Add point data attributes
-        for name, array in self.grid_data["point_data"].items():
+        for name, _ in self.grid_data["point_data"].items():
             self._add_point_attribute(grid, name, dims, prefix)
 
         # Add cell data attributes
-        for name, array in self.grid_data["cell_data"].items():
+        for name, _ in self.grid_data["cell_data"].items():
             self._add_cell_attribute(grid, name, dims, prefix)
 
     def _add_grid_to_collection(
@@ -123,16 +129,18 @@ class XDMFGenerator:
         """Add a grid to a temporal collection using 3DRectMesh topology."""
         prefix = f"step_{time_step}/"
 
-        grid = etree.SubElement(collection, "Grid", Name=f"Step_{time_step}", GridType="Uniform")
+        grid = etree.SubElement(
+            collection, "Grid", Name=f"Step_{time_step}", GridType="Uniform"
+        )
 
         # Add time information
-        time_elem = etree.SubElement(grid, "Time", Value=str(int(time_value)))
+        etree.SubElement(grid, "Time", Value=str(int(time_value)))
 
         # Add topology - always use 3DRectMesh
         if self.grid_data:
             dims = self.grid_data["dimensions"]
             nx, ny, nz = dims[0], dims[1], dims[2]
-            topology = etree.SubElement(
+            etree.SubElement(
                 grid,
                 "Topology",
                 TopologyType="3DRectMesh",
@@ -229,11 +237,11 @@ class XDMFGenerator:
     def generate_temporal_collection(
         hdf5_filepath: str,
         output_filepath: str,
-        time_steps: List[int],
-        time_values: Optional[List[float]] = None,
+        time_steps: list[int],
+        time_values: Optional[list[float]] = None,
         dimensions: tuple = (10, 10, 10),
-        point_arrays: Optional[List[str]] = None,
-        cell_arrays: Optional[List[str]] = None,
+        point_arrays: Optional[list[str]] = None,
+        cell_arrays: Optional[list[str]] = None,
     ) -> None:
         """
         Generate XDMF for time series using 3DRectMesh topology.
@@ -263,18 +271,24 @@ class XDMFGenerator:
         xdmf = etree.Element("Xdmf", Version="3.0")
         domain = etree.SubElement(xdmf, "Domain")
         collection = etree.SubElement(
-            domain, "Grid", Name="TimeSeries", GridType="Collection", CollectionType="Temporal"
+            domain,
+            "Grid",
+            Name="TimeSeries",
+            GridType="Collection",
+            CollectionType="Temporal",
         )
 
         for i, step in enumerate(time_steps):
             time_val = time_values[i] if i < len(time_values) else float(step)
             prefix = f"step_{step}/"
 
-            grid = etree.SubElement(collection, "Grid", Name=f"Step_{step}", GridType="Uniform")
-            time_elem = etree.SubElement(grid, "Time", Value=str(int(time_val)))
+            grid = etree.SubElement(
+                collection, "Grid", Name=f"Step_{step}", GridType="Uniform"
+            )
+            etree.SubElement(grid, "Time", Value=str(int(time_val)))
 
             # Topology - always use 3DRectMesh
-            topology = etree.SubElement(
+            etree.SubElement(
                 grid,
                 "Topology",
                 TopologyType="3DRectMesh",
@@ -311,7 +325,11 @@ class XDMFGenerator:
             # Point arrays
             for arr_name in point_arrays:
                 attribute = etree.SubElement(
-                    grid, "Attribute", Name=arr_name, AttributeType="Scalar", Center="Node"
+                    grid,
+                    "Attribute",
+                    Name=arr_name,
+                    AttributeType="Scalar",
+                    Center="Node",
                 )
                 data_item = etree.SubElement(
                     attribute,
@@ -326,7 +344,11 @@ class XDMFGenerator:
             # Cell arrays
             for arr_name in cell_arrays:
                 attribute = etree.SubElement(
-                    grid, "Attribute", Name=arr_name, AttributeType="Scalar", Center="Cell"
+                    grid,
+                    "Attribute",
+                    Name=arr_name,
+                    AttributeType="Scalar",
+                    Center="Cell",
                 )
                 data_item = etree.SubElement(
                     attribute,

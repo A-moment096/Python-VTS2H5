@@ -1,11 +1,11 @@
 """VTS file reader module."""
 
+import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Dict, Optional, Any, Tuple
-import numpy as np
+from typing import Any, Optional
+
 import vtk
 from vtkmodules.util import numpy_support
-import xml.etree.ElementTree as ET
 
 
 class VTSReader:
@@ -21,33 +21,33 @@ class VTSReader:
         self.filepath = Path(filepath)
         if not self.filepath.exists():
             raise FileNotFoundError(f"File not found: {filepath}")
-    
-    def validate_xml(self) -> Tuple[bool, Optional[str]]:
+
+    def validate_xml(self) -> tuple[bool, Optional[str]]:
         """
         Validate that the VTS file is well-formed XML.
-        
+
         Returns:
             Tuple of (is_valid, error_message)
         """
         try:
             tree = ET.parse(str(self.filepath))
             root = tree.getroot()
-            
+
             # Check if it's a VTK file
-            if root.tag != 'VTKFile':
+            if root.tag != "VTKFile":
                 return False, "Not a valid VTK file (missing VTKFile root element)"
-            
+
             # Check if it's a StructuredGrid
-            if root.get('type') != 'StructuredGrid':
+            if root.get("type") != "StructuredGrid":
                 return False, f"Not a StructuredGrid file (type is {root.get('type')})"
-            
+
             return True, None
         except ET.ParseError as e:
             return False, f"XML parse error: {str(e)}"
         except Exception as e:
             return False, f"Validation error: {str(e)}"
 
-    def read(self) -> Dict[str, Any]:
+    def read(self) -> dict[str, Any]:
         """
         Read VTS file and extract grid data.
 
@@ -114,7 +114,7 @@ class VTSReader:
 
         return result
 
-    def get_info(self) -> Dict[str, Any]:
+    def get_info(self) -> dict[str, Any]:
         """
         Get basic information about the VTS file without loading all data.
 
@@ -131,7 +131,7 @@ class VTSReader:
 
         dimensions = [0, 0, 0]
         output.GetDimensions(dimensions)
-        
+
         bounds = [0.0] * 6
         output.GetBounds(bounds)
 
@@ -142,10 +142,12 @@ class VTSReader:
             "num_cells": output.GetNumberOfCells(),
             "bounds": bounds,
             "point_arrays": [
-                point_data_obj.GetArrayName(i) for i in range(point_data_obj.GetNumberOfArrays())
+                point_data_obj.GetArrayName(i)
+                for i in range(point_data_obj.GetNumberOfArrays())
             ],
             "cell_arrays": [
-                cell_data_obj.GetArrayName(i) for i in range(cell_data_obj.GetNumberOfArrays())
+                cell_data_obj.GetArrayName(i)
+                for i in range(cell_data_obj.GetNumberOfArrays())
             ],
         }
 

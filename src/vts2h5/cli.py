@@ -1,10 +1,9 @@
 """Command-line interface for vts2h5."""
 
 import argparse
+import re
 import sys
 from pathlib import Path
-from typing import List
-import re
 
 
 def parse_args():
@@ -112,7 +111,7 @@ Examples:
     return parser.parse_args()
 
 
-def find_vts_files(folder: Path) -> List[Path]:
+def find_vts_files(folder: Path) -> list[Path]:
     """
     Find all VTS files in a folder.
 
@@ -131,63 +130,65 @@ def find_vts_files(folder: Path) -> List[Path]:
         sys.exit(1)
 
     files = list(folder.glob("*.vts"))
-    
+
     if not files:
         print(f"Error: No VTS files found in {folder}", file=sys.stderr)
         sys.exit(1)
 
     # Sort files numerically by step number
     def get_step_number(filepath: Path) -> int:
-        match = re.search(r'step[_\s]*(\d+)', filepath.stem)
+        match = re.search(r"step[_\s]*(\d+)", filepath.stem)
         return int(match.group(1)) if match else 0
-    
+
     files.sort(key=get_step_number)
     return files
 
 
 def display_folder_info(folder: Path) -> None:
     """Display information about VTS files in a folder as a time series."""
-    from vts2h5.reader import VTSReader
     from vts2h5.converter import extract_time_steps
-    
+    from vts2h5.reader import VTSReader
+
     files = find_vts_files(folder)
-    
+
     print(f"\nFolder: {folder}")
     print(f"VTS files: {len(files)}")
-    
+
     # Read first file to get grid information
     try:
         reader = VTSReader(str(files[0]))
         info = reader.get_info()
-        
+
         # Extract time steps from filenames
         time_steps = extract_time_steps(files)
-        
+
         # Calculate total original size
         total_size = sum(f.stat().st_size for f in files)
-        
-        print(f"\nTime Series Information:")
-        print(f"  Time steps:    {len(time_steps)} steps (from {min(time_steps)} to {max(time_steps)})")
+
+        print("\nTime Series Information:")
+        print(
+            f"  Time steps:    {len(time_steps)} steps (from {min(time_steps)} to {max(time_steps)})"
+        )
         print(f"  Total size:    {total_size:,} bytes ({total_size/1024/1024:.2f} MB)")
-        
-        print(f"\nGrid Information:")
+
+        print("\nGrid Information:")
         print(f"  Dimensions:    {info['dimensions']}")
         print(f"  Points:        {info['num_points']:,}")
         print(f"  Cells:         {info['num_cells']:,}")
-        
-        if info['point_arrays']:
+
+        if info["point_arrays"]:
             print(f"  Point arrays:  {', '.join(info['point_arrays'])}")
-        if info['cell_arrays']:
+        if info["cell_arrays"]:
             print(f"  Cell arrays:   {', '.join(info['cell_arrays'])}")
-        
+
         print()
-        
+
     except Exception as e:
         print(f"Error reading files: {e}", file=sys.stderr)
 
 
 def convert_folder(
-    input_files: List[Path],
+    input_files: list[Path],
     output_file: Path,
     xdmf_output: Path,
     compression: str,
@@ -198,7 +199,7 @@ def convert_folder(
 ) -> None:
     """Convert all VTS files in a folder to HDF5 as a time series."""
     from vts2h5.converter import convert_vts_to_hdf5
-    
+
     # Call the converter
     stats = convert_vts_to_hdf5(
         input_files=input_files,
@@ -210,27 +211,27 @@ def convert_folder(
         silent=silent,
         verbose=verbose,
     )
-    
+
     # Display results
     if silent:
         return
-    
+
     if not verbose:
         print(f"\nH5:     {output_file}")
         print(f"XDMF:   {xdmf_output}")
     else:
-        print(f"\n✓ Conversion complete!")
-        
-        if stats['grid_info']:
-            grid_info = stats['grid_info']
-            print(f"\nGrid Information:")
+        print("\n✓ Conversion complete!")
+
+        if stats["grid_info"]:
+            grid_info = stats["grid_info"]
+            print("\nGrid Information:")
             print(f"  Dimensions:    {grid_info['dimensions']}")
             print(f"  Points:        {grid_info['num_points']:,}")
             print(f"  Cells:         {grid_info['num_cells']:,}")
-            if grid_info['point_arrays']:
+            if grid_info["point_arrays"]:
                 print(f"  Point arrays:  {', '.join(grid_info['point_arrays'])}")
-        
-        print(f"\nOutput:")
+
+        print("\nOutput:")
         print(f"  H5 file:       {output_file}")
         print(f"  XDMF file:     {xdmf_output}")
         print(f"  Files:         {stats['num_files']} files")
@@ -244,16 +245,16 @@ def main():
     args = parse_args()
 
     input_folder = Path(args.input_folder)
-    
+
     # Validate input folder
     if not input_folder.exists():
         print(f"Error: Folder not found: {input_folder}", file=sys.stderr)
         sys.exit(1)
-    
+
     if not input_folder.is_dir():
         print(f"Error: Not a folder: {input_folder}", file=sys.stderr)
         sys.exit(1)
-    
+
     # Info mode
     if args.info:
         display_folder_info(input_folder)
@@ -264,7 +265,7 @@ def main():
 
     # Determine output name (default to input folder name)
     output_name = args.output_name if args.output_name else input_folder.name
-    
+
     # Determine output folder
     if args.use_input_folder:
         # Output in the same folder as input
@@ -276,7 +277,7 @@ def main():
     else:
         # Output to current working directory (default)
         output_folder = Path.cwd()
-    
+
     # Build output file paths
     output_h5 = output_folder / f"{output_name}.h5"
     output_xdmf = output_folder / f"{output_name}.xdmf2"

@@ -21,6 +21,7 @@ for frame in expected:
     data = reader.GetClientSideObject().GetOutputDataObject(0)
     assert data.GetNumberOfPoints() == len(frame["points"])
     assert data.GetDimensions() == tuple(frame["dimensions"])
+    assert data.GetPointData().GetScalars().GetName() == frame["first_field"]
     actual_points = np.array(
         [data.GetPoint(i) for i in range(data.GetNumberOfPoints())]
     )

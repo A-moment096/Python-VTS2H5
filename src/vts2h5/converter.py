@@ -72,6 +72,7 @@ def convert_vts_to_hdf5(
     silent: bool = False,
     verbose: bool = False,
     float_dtype: str = "preserve",
+    first_fields=None,
 ) -> dict[str, Any]:
     """
     Convert VTS files to HDF5 with XDMF3 descriptor.
@@ -86,6 +87,7 @@ def convert_vts_to_hdf5(
         silent: Suppress all output
         verbose: Show detailed information
         float_dtype: Floating field storage: preserve, float32, or float64
+        first_fields: Preferred field names or prefixes, matched case-insensitively
 
     Returns:
         Dictionary with conversion statistics
@@ -102,6 +104,11 @@ def convert_vts_to_hdf5(
     try:
         comp = None if compression == "none" else compression
         comp_opts = None if compression == "none" else compression_level
+        # A preference typo must not replace an existing output pair.
+        preferred_grid = None
+        if first_fields:
+            preferred_grid = VTSReader(str(input_files[0])).read()
+            XDMFGenerator.validate_first_fields(preferred_grid, first_fields)
         writer = HDF5Writer(
             str(output_file),
             compression=comp,
@@ -217,7 +224,11 @@ def convert_vts_to_hdf5(
                 for i, input_file in enumerate(iterator):
                     current_name = input_file.name
                     reader = VTSReader(str(input_file))
-                    grid_data = reader.read()
+                    grid_data = (
+                        preferred_grid
+                        if i == 0 and preferred_grid is not None
+                        else reader.read()
+                    )
 
                     if i == 0:
                         first_grid_data = grid_data
@@ -273,6 +284,7 @@ def convert_vts_to_hdf5(
                 point_arrays=list(first_grid_data["point_data"].keys()),
                 cell_arrays=list(first_grid_data["cell_data"].keys()),
                 hdf5_group=TIMESERIES_GROUP,
+                first_fields=first_fields,
             )
 
         # Calculate statistics

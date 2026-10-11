@@ -1,25 +1,26 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [2.0.0] - 2026-10-11
+## [1.1.0] - 2026-10-11
 
 ### Added
-- `--float-dtype preserve|float32|float64` for floating-point field storage; integer types and float64 geometry are retained.
-- Validation of uniform, axis-aligned coordinates and fixed geometry/field schema across time steps.
-- Optional ParaView XDMF3 round-trip tests for 3D, planar, and linear grids.
+- Multiple input folders, with batch output collision checks.
+- `-n` / `--beside-input` writes each output pair beside its input folder.
+- Repeatable `-f` / `--first-field` prioritizes fields by case-insensitive exact name or prefix.
+- `--float-dtype preserve|float32|float64`; integer field types and float64 geometry are retained.
+- Coordinate and time-series schema validation, plus optional ParaView round-trip tests.
 
 ### Fixed
-- Generate XDMF3 `3DCoRectMesh` descriptors with ZYX geometry and dimensions, rather than the incompatible `3DRectMesh`/origin-spacing combination.
-- Describe actual HDF5 field shapes, types, and precision, including vectors, tensors, and cell data.
-- Preserve fractional time values and one-frame temporal collections; validate time values and duplicate step IDs.
-- Resolve HDF5 references relative to the descriptor and write LZF datasets without unsupported compression options.
+- Generate XDMF3 `3DCoRectMesh` with ZYX dimensions, origin, and spacing.
+- Derive point/cell scalar, vector, and tensor metadata from actual HDF5 datasets.
+- Preserve fractional times and one-frame temporal collections; validate duplicate steps.
+- Resolve HDF5 references relative to the descriptor; fix LZF options and current-directory output naming.
+- Reject unmatched field preferences before opening output files.
+- Fix optional XML-attribute access reported by Pylance/Pyright.
 
 ### Changed
-- HDF5 origin and spacing now use ZYX order and carry an explicit layout marker. Regenerate older XYZ-layout files before appending or producing new descriptors.
+- Make `-i`, `-n`, and `-o` mutually exclusive; restrict `--output-name` to one input folder.
+- Shorten the README and move detailed usage and ParaView settings to `docs/usage.md`.
+- Geometry uses ZYX order, and temporal fields live under `/timeseries`. Regenerate older output from VTS rather than relabeling descriptors or appending new frames.
 
 ## [0.2.0] - 2025-12-04
 

@@ -18,10 +18,12 @@ class XDMFGenerator:
         hdf5_filepath: str,
         grid_data: Optional[dict[str, Any]] = None,
         hdf5_group: str = "",
+        first_fields: Optional[list[str]] = None,
     ):
         self.hdf5_filepath = Path(hdf5_filepath)
         self.grid_data = grid_data
         self.hdf5_group = hdf5_group.strip("/")
+        self.first_fields = first_fields or []
 
     def generate(
         self,
@@ -42,6 +44,22 @@ class XDMFGenerator:
     def _step_prefix(self, time_step):
         base = f"{self.hdf5_group}/" if self.hdf5_group else ""
         return base if time_step is None else f"{base}step_{time_step}/"
+
+    @staticmethod
+    def validate_first_fields(grid_data, first_fields):
+        """Validate preferences before a converter opens its output file."""
+        names = [
+            name.casefold()
+            for center in ("point_data", "cell_data")
+            for name in grid_data[center]
+        ]
+        for preferred in first_fields or []:
+            if not preferred or not any(
+                name.startswith(preferred.casefold()) for name in names
+            ):
+                raise ValueError(
+                    f"No field matches preferred name or prefix {preferred!r}"
+                )
 
     @staticmethod
     def _data_item(parent, dataset, reference, name=None):
@@ -184,6 +202,30 @@ class XDMFGenerator:
                             Center=center,
                         )
                         self._data_item(attr, dataset, f"{reference}:{dataset.name}")
+                attributes = grid.findall("Attribute")
+                ordered = []
+                for preferred in self.first_fields:
+                    key = preferred.casefold()
+                    matches = [
+                        a
+                        for a in attributes
+                        if cast(str, a.attrib["Name"]).casefold() == key
+                    ]
+                    if not matches:
+                        matches = [
+                            a
+                            for a in attributes
+                            if cast(str, a.attrib["Name"]).casefold().startswith(key)
+                        ]
+                    if not matches:
+                        raise ValueError(
+                            f"No field matches preferred name or prefix {preferred!r}"
+                        )
+                    ordered.extend(a for a in matches if a not in ordered)
+                ordered.extend(a for a in attributes if a not in ordered)
+                for attribute in ordered:
+                    grid.remove(attribute)
+                    grid.append(attribute)
         etree.ElementTree(root).write(
             str(output), pretty_print=True, xml_declaration=True, encoding="utf-8"
         )
@@ -198,9 +240,12 @@ class XDMFGenerator:
         point_arrays: Optional[list[str]] = None,
         cell_arrays: Optional[list[str]] = None,
         hdf5_group: str = "",
+        first_fields: Optional[list[str]] = None,
     ) -> None:
         """Describe actual stored types/shapes; retain the existing public API."""
-        generator = XDMFGenerator(hdf5_filepath, hdf5_group=hdf5_group)
+        generator = XDMFGenerator(
+            hdf5_filepath, hdf5_group=hdf5_group, first_fields=first_fields
+        )
         generator._generate(
             output_filepath,
             time_steps,

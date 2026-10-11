@@ -43,6 +43,7 @@ def test_vts_to_xdmf3_roundtrip(tmp_path, dims, dtype):
             "ids": np.arange(n, dtype=np.int32),
             "unsigned": np.arange(n, dtype=np.uint64) + 2**63,
             "tensor": np.arange(n * 9, dtype=np.float64).reshape(n, 9),
+            "Con_Nb_1": np.linspace(0.2, 0.8, n),
         }
         for name, values in arrays.items():
             array = numpy_to_vtk(values, deep=True)
@@ -64,6 +65,7 @@ def test_vts_to_xdmf3_roundtrip(tmp_path, dims, dtype):
             dict(
                 time=step / 40 + 0.125,
                 dimensions=source["dimensions"],
+                first_field="Con_Nb_1",
                 points=source["points"].tolist(),
                 **{
                     center: {
@@ -80,7 +82,12 @@ def test_vts_to_xdmf3_roundtrip(tmp_path, dims, dtype):
     xmf = descriptors / "converted.xdmf"
     convert_vts_to_hdf5(inputs, h5, xmf, jobs=1, silent=True, float_dtype=dtype)
     XDMFGenerator.generate_temporal_collection(
-        str(h5), str(xmf), [0, 10], time_values=[0.125, 0.375], hdf5_group="timeseries"
+        str(h5),
+        str(xmf),
+        [0, 10],
+        time_values=[0.125, 0.375],
+        hdf5_group="timeseries",
+        first_fields=["con"],
     )
     expected_file = tmp_path / "expected.json"
     expected_file.write_text(json.dumps(expected))

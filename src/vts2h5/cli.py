@@ -11,11 +11,14 @@ from vts2h5 import __version__
 def parse_args():
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Convert VTK Structured Grid (VTS) files from a folder to HDF5 with XDMF3 descriptors",
+        description="Convert VTS files from one or more folders to HDF5 with XDMF3 descriptors",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Convert folder `data`, output test1.h5 and test1.xdmf in current directory
+  # Convert multiple folders, output beside each, prioritize concentration fields
+  vts2h5 data/trial1 data/trial2 -n -f con
+
+  # Convert folder `data`, output data.h5 and data.xdmf in current directory
   vts2h5 data
 
   # Output in the same folder as input
@@ -44,19 +47,36 @@ Examples:
         """,
     )
 
-    parser.add_argument("input_folder", help="Input folder containing VTS files")
-
     parser.add_argument(
+        "input_folders", nargs="+", help="Input folders containing VTS files"
+    )
+    location = parser.add_mutually_exclusive_group()
+
+    location.add_argument(
         "-i",
         "--input-folder",
         action="store_true",
         dest="use_input_folder",
         help="Output files in the same folder as input",
     )
-    parser.add_argument(
+    location.add_argument(
         "-o",
         "--output-folder",
         help="Output folder path (default: current directory)",
+    )
+    location.add_argument(
+        "-n",
+        "--beside-input",
+        action="store_true",
+        help="Output next to each input folder, in its parent directory",
+    )
+    parser.add_argument(
+        "-f",
+        "--first-field",
+        action="append",
+        default=[],
+        metavar="FIELD",
+        help="Prioritize a field by case-insensitive name or prefix; repeat to set priority order",
     )
     parser.add_argument(
         "-s",
@@ -117,7 +137,20 @@ Examples:
         help="Floating-point field storage (default: preserve). Geometry stays float64; "
         "integers retain their type. float16 is unsupported by the XDMF3 reader.",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.output_name and len(args.input_folders) != 1:
+        parser.error("--output-name requires exactly one input folder")
+    if args.output_name and (
+        args.output_name in (".", "..")
+        or "/" in args.output_name
+        or "\\" in args.output_name
+    ):
+        parser.error("--output-name must be a file stem, not a path")
+    if any(not field.strip() for field in args.first_field):
+        parser.error("--first-field must not be empty")
+    # Preserve the previous parse_args attribute for single-folder callers.
+    args.input_folder = args.input_folders[0] if len(args.input_folders) == 1 else None
+    return args
 
 
 def default_output_name(input_folder: Path) -> str:
@@ -217,6 +250,7 @@ def convert_folder(
     verbose: bool,
     jobs: int = 0,
     float_dtype: str = "preserve",
+    first_fields=None,
 ) -> None:
     """Convert all VTS files in a folder to HDF5 as a time series."""
     from vts2h5.converter import convert_vts_to_hdf5
@@ -232,6 +266,7 @@ def convert_folder(
         silent=silent,
         verbose=verbose,
         float_dtype=float_dtype,
+        first_fields=first_fields,
     )
 
     # Display results
@@ -266,65 +301,59 @@ def main():
     """Main entry point for the CLI."""
     args = parse_args()
 
-    input_folder = Path(args.input_folder)
+    folders = [Path(folder).expanduser().resolve() for folder in args.input_folders]
+    # Plan every destination before converting, so a batch cannot overwrite itself.
+    plans = []
+    destinations = set()
+    for folder in folders:
+        input_files = find_vts_files(folder)
+        if args.info:
+            plans.append((folder, input_files, None, None))
+            continue
+        name = args.output_name or default_output_name(folder)
+        if args.use_input_folder:
+            output_folder = folder
+        elif args.beside_input:
+            output_folder = folder.parent
+        elif args.output_folder:
+            output_folder = Path(args.output_folder).expanduser().resolve()
+        else:
+            output_folder = Path.cwd()
+        output_h5 = output_folder / f"{name}.h5"
+        output_xdmf = output_folder / f"{name}.xdmf"
+        for destination in (output_h5, output_xdmf):
+            if destination in destinations:
+                print(
+                    f"Error: Multiple inputs target {destination}; use -i or -n to separate outputs",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            destinations.add(destination)
+        plans.append((folder, input_files, output_h5, output_xdmf))
 
-    # Validate input folder
-    if not input_folder.exists():
-        print(f"Error: Folder not found: {input_folder}", file=sys.stderr)
-        sys.exit(1)
-
-    if not input_folder.is_dir():
-        print(f"Error: Not a folder: {input_folder}", file=sys.stderr)
-        sys.exit(1)
-
-    # Info mode
-    if args.info:
-        display_folder_info(input_folder)
-        return
-
-    # Find all VTS files in the folder
-    input_files = find_vts_files(input_folder)
-
-    # Determine output name (default to input folder name)
-    output_name = (
-        args.output_name if args.output_name else default_output_name(input_folder)
-    )
-
-    # Determine output folder
-    if args.use_input_folder:
-        # Output in the same folder as input
-        output_folder = input_folder
-    elif args.output_folder:
-        # Output to specified folder
-        output_folder = Path(args.output_folder)
-        output_folder.mkdir(parents=True, exist_ok=True)
-    else:
-        # Output to current working directory (default)
-        output_folder = Path.cwd()
-
-    # Build output file paths
-    output_h5 = output_folder / f"{output_name}.h5"
-    output_xdmf = output_folder / f"{output_name}.xdmf"
-
-    if not args.silent:
-        print(f"Converting {len(input_files)} VTS files from {input_folder}")
-        if args.verbose:
-            print(f"H5:     {output_h5}")
-            print(f"XDMF:   {output_xdmf}")
-        print()
-
-    # Convert all files as a time series
-    convert_folder(
-        input_files,
-        output_h5,
-        output_xdmf,
-        args.compression,
-        args.compression_level,
-        args.silent,
-        args.verbose,
-        args.jobs,
-        args.float_dtype,
-    )
+    for folder, input_files, output_h5, output_xdmf in plans:
+        if args.info:
+            display_folder_info(folder)
+            continue
+        output_h5.parent.mkdir(parents=True, exist_ok=True)
+        if not args.silent:
+            print(f"Converting {len(input_files)} VTS files from {folder}")
+            if args.verbose:
+                print(f"H5:     {output_h5}")
+                print(f"XDMF:   {output_xdmf}")
+            print()
+        convert_folder(
+            input_files,
+            output_h5,
+            output_xdmf,
+            args.compression,
+            args.compression_level,
+            args.silent,
+            args.verbose,
+            args.jobs,
+            args.float_dtype,
+            args.first_field,
+        )
 
 
 if __name__ == "__main__":

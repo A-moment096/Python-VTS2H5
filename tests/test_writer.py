@@ -29,7 +29,7 @@ class TestHDF5Writer:
         writer = HDF5Writer(str(output_file), compression="lzf", compression_opts=1)
 
         assert writer.compression == "lzf"
-        assert writer.compression_opts == 1
+        assert writer.compression_opts is None  # LZF does not accept a gzip level.
 
     def test_context_manager(self, temp_dir):
         """Test HDF5Writer as context manager."""
@@ -84,6 +84,21 @@ class TestHDF5Writer:
             assert "step_100" in f
             assert "step_200" in f
 
+    def test_write_with_time_series_group(self, temp_dir, sample_grid_data):
+        """Test writing time steps under a top-level group."""
+        output_file = temp_dir / "test.h5"
+
+        with HDF5Writer(str(output_file), group="timeseries") as writer:
+            writer.write(sample_grid_data, time_step=100)
+
+        with h5py.File(output_file, "r") as f:
+            assert "timeseries" in f
+            assert "step_100" in f["timeseries"]
+            assert "temperature" in f["timeseries/step_100/point_data"]
+            # Origin and spacing stay at the root level
+            assert "origin" in f
+            assert "spacing" in f
+
     def test_write_multiple_method(self, temp_dir, sample_grid_data):
         """Test write_multiple method."""
         output_file = temp_dir / "test.h5"
@@ -132,7 +147,9 @@ class TestHDF5Writer:
         """Test that compression is applied to datasets."""
         output_file = temp_dir / "test.h5"
 
-        with HDF5Writer(str(output_file), compression="gzip", compression_opts=9) as writer:
+        with HDF5Writer(
+            str(output_file), compression="gzip", compression_opts=9
+        ) as writer:
             writer.write(sample_grid_data)
 
         with h5py.File(output_file, "r") as f:
@@ -197,9 +214,9 @@ class TestHDF5Writer:
         """Test writing cell data."""
         # Add cell data to sample
         sample_grid_data["cell_data"] = {
-            "cell_temp": np.random.rand(
-                sample_grid_data["num_cells"]
-            ).astype(np.float64)
+            "cell_temp": np.random.rand(sample_grid_data["num_cells"]).astype(
+                np.float64
+            )
         }
 
         output_file = temp_dir / "test.h5"
@@ -210,6 +227,8 @@ class TestHDF5Writer:
         with h5py.File(output_file, "r") as f:
             assert "cell_data" in f
             assert "cell_temp" in f["cell_data"]
+            # Cell data should be reshaped to (nz-1, ny-1, nx-1) for XDMF
+            assert f["cell_data/cell_temp"].shape == (9, 9, 9)
 
     def test_write_error_handling(self, temp_dir):
         """Test error handling during write."""

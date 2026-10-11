@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-10-11
+
+### Added
+- `--float-dtype preserve|float32|float64` for floating-point field storage; integer types and float64 geometry are retained.
+- Validation of uniform, axis-aligned coordinates and fixed geometry/field schema across time steps.
+- Optional ParaView XDMF3 round-trip tests for 3D, planar, and linear grids.
+
+### Fixed
+- Generate XDMF3 `3DCoRectMesh` descriptors with ZYX geometry and dimensions, rather than the incompatible `3DRectMesh`/origin-spacing combination.
+- Describe actual HDF5 field shapes, types, and precision, including vectors, tensors, and cell data.
+- Preserve fractional time values and one-frame temporal collections; validate time values and duplicate step IDs.
+- Resolve HDF5 references relative to the descriptor and write LZF datasets without unsupported compression options.
+
+### Changed
+- HDF5 origin and spacing now use ZYX order and carry an explicit layout marker. Regenerate older XYZ-layout files before appending or producing new descriptors.
+
 ## [0.2.0] - 2025-12-04
 
 ### Added

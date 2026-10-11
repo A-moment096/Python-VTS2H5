@@ -31,25 +31,31 @@ pip install vts2h5-xxx-py3-none-any.whl
 Convert all VTS files in a folder (outputs to current directory with folder name):
 ```bash
 vts2h5 data/test1
-# Creates: test1.h5 and test1.xdmf2
+# Creates: test1.h5 and test1.xdmf
+```
+
+Convert all VTS files in the current directory (outputs use the current directory name):
+```bash
+vts2h5 .
+# Creates: <current-directory-name>.h5 and <current-directory-name>.xdmf
 ```
 
 Output files in the input folder:
 ```bash
 vts2h5 data/test1 -i
-# Creates: data/test1/test1.h5 and data/test1/test1.xdmf2
+# Creates: data/test1/test1.h5 and data/test1/test1.xdmf
 ```
 
 Output to a specific folder:
 ```bash
 vts2h5 data/test1 -o results/
-# Creates: results/test1.h5 and results/test1.xdmf2
+# Creates: results/test1.h5 and results/test1.xdmf
 ```
 
 Custom output name:
 ```bash
 vts2h5 data/test1 --output-name simulation
-# Creates: simulation.h5 and simulation.xdmf2
+# Creates: simulation.h5 and simulation.xdmf
 ```
 
 Silent mode (minimal output):
@@ -74,26 +80,42 @@ vts2h5 data/test1 --compression lzf  # Faster, lower ratio
 vts2h5 data/test1 --compression none  # No compression
 ```
 
+Floating-point field storage:
+```bash
+vts2h5 data/test1 --float-dtype float32
+vts2h5 data/test1 --float-dtype float64
+vts2h5 data/test1 --float-dtype preserve  # Default: keep each field's input dtype
+```
+
+`float32` reduces storage for double-precision fields, with rounding and possible underflow. Finite values that overflow the selected type cause an error. Integer fields retain their types, and grid geometry remains float64. `float16` is unsupported by ParaView's XDMF3 reader and is not offered. The Python APIs `convert_vts_to_hdf5`, `convert_folder`, and `HDF5Writer` accept the same `float_dtype` option.
+
 ## File Format
 
 The tool converts VTK Structured Grid files to HDF5 with the following structure:
 
 ```
 output.h5
-├── origin              # Grid origin [x, y, z]
-├── spacing             # Grid spacing [dx, dy, dz]
-├── step_100000/
-│   └── point_data/
-│       ├── grains
-│       ├── energy_density
-│       └── ...
-├── step_200000/
-│   └── point_data/
-│       └── ...
-└── ...
+├── origin              # Grid origin [z, y, x], float64
+├── spacing             # Grid spacing [dz, dy, dx], float64
+└── timeseries/
+    ├── step_100000/
+    │   └── point_data/
+    │       ├── grains
+    │       ├── energy_density
+    │       └── ...
+    ├── step_200000/
+    │   └── point_data/
+    │       └── ...
+    └── ...
 ```
 
-The XDMF2 file uses `3DRectMesh` topology with `ORIGIN_DXDYDZ` geometry, compatible with ParaView and other XDMF-aware visualization tools.
+The XDMF3 file uses `3DCoRectMesh` topology with `ORIGIN_DXDYDZ` geometry. Topology dimensions, origin, and spacing use Z/Y/X order, as required by ParaView's XDMF3 uniform-grid reader. Spatial array shapes are `(nz, ny, nx)` for point scalars, and `(max(nz-1,1), max(ny-1,1), max(nx-1,1))` for cell scalars. Vector and tensor components are stored on a final axis; their component order remains unchanged. XDMF number types and precision are derived from the actual stored datasets.
+
+The HDF5 root attribute `coordinate_order="ZYX"` identifies this layout; its `dimensions` attribute retains the Python/VTK `(nx, ny, nz)` convention. Older HDF5 files with XYZ geometry must be regenerated from VTS before using this exporter or appending frames. Do not change only their XDMF version number.
+
+Only axis-aligned, uniformly spaced grids are supported. The exporter checks actual point coordinates and rejects nonuniform or curved grids. A singleton axis uses spacing 1, which does not add thickness or move any points. Time-series frames must share geometry, field names, component counts, and stored types. Scalars, three-component vectors, six-component symmetric tensors, and nine-component tensors are supported for both point and cell data.
+
+Open the generated descriptor with **Xdmf3 Reader T** in ParaView. Its uniform-grid output may default to the **Slice** representation; select **Surface** when comparing with the earlier XDMF2 rectilinear-grid rendering. HDF5 references are relative to the descriptor's location, including when the descriptor is in a different folder.
 
 ## Requirements
 

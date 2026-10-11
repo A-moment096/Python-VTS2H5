@@ -110,7 +110,9 @@ def invalid_vts_file(temp_dir):
 def corrupted_vts_file(temp_dir):
     """Create a corrupted VTS file (valid XML but not VTK format)."""
     corrupted_file = temp_dir / "corrupted.vts"
-    corrupted_file.write_text('<?xml version="1.0"?>\n<NotVTK><Data>test</Data></NotVTK>')
+    corrupted_file.write_text(
+        '<?xml version="1.0"?>\n<NotVTK><Data>test</Data></NotVTK>'
+    )
     return corrupted_file
 
 
@@ -124,7 +126,15 @@ def sample_grid_data():
         "dimensions": [nx, ny, nz],
         "num_points": num_points,
         "num_cells": (nx - 1) * (ny - 1) * (nz - 1),
-        "points": np.random.rand(num_points, 3).astype(np.float64),
+        "points": np.array(
+            [
+                (i * 0.1, j * 0.1, k * 0.1)
+                for k in range(nz)
+                for j in range(ny)
+                for i in range(nx)
+            ],
+            dtype=np.float64,
+        ),
         "point_data": {
             "temperature": np.random.rand(num_points).astype(np.float64),
             "pressure": np.random.rand(num_points).astype(np.float64) * 100,

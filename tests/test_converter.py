@@ -115,7 +115,7 @@ class TestConvertVTSToHDF5:
     def test_convert_single_file(self, temp_dir, sample_vts_files):
         """Test converting a single VTS file."""
         output_h5 = temp_dir / "output.h5"
-        output_xdmf = temp_dir / "output.xdmf2"
+        output_xdmf = temp_dir / "output.xdmf"
 
         stats = convert_vts_to_hdf5(
             input_files=[sample_vts_files[0]],
@@ -132,7 +132,7 @@ class TestConvertVTSToHDF5:
     def test_convert_multiple_files(self, temp_dir, sample_vts_files):
         """Test converting multiple VTS files."""
         output_h5 = temp_dir / "output.h5"
-        output_xdmf = temp_dir / "output.xdmf2"
+        output_xdmf = temp_dir / "output.xdmf"
 
         stats = convert_vts_to_hdf5(
             input_files=sample_vts_files,
@@ -148,7 +148,7 @@ class TestConvertVTSToHDF5:
     def test_hdf5_structure(self, temp_dir, sample_vts_files):
         """Test HDF5 file structure after conversion."""
         output_h5 = temp_dir / "output.h5"
-        output_xdmf = temp_dir / "output.xdmf2"
+        output_xdmf = temp_dir / "output.xdmf"
 
         convert_vts_to_hdf5(
             input_files=sample_vts_files,
@@ -162,18 +162,19 @@ class TestConvertVTSToHDF5:
             assert "origin" in f
             assert "spacing" in f
 
-            # Check for time steps
-            assert "step_0" in f
-            assert "step_100" in f
-            assert "step_200" in f
+            # Check for time series group and time steps
+            assert "timeseries" in f
+            assert "step_0" in f["timeseries"]
+            assert "step_100" in f["timeseries"]
+            assert "step_200" in f["timeseries"]
 
             # Check for point data
-            assert "temperature" in f["step_0/point_data"]
+            assert "temperature" in f["timeseries/step_0/point_data"]
 
     def test_compression_gzip(self, temp_dir, sample_vts_files):
         """Test conversion with gzip compression."""
         output_h5 = temp_dir / "output.h5"
-        output_xdmf = temp_dir / "output.xdmf2"
+        output_xdmf = temp_dir / "output.xdmf"
 
         convert_vts_to_hdf5(
             input_files=sample_vts_files,
@@ -185,14 +186,14 @@ class TestConvertVTSToHDF5:
         )
 
         with h5py.File(output_h5, "r") as f:
-            dataset = f["step_0/point_data/temperature"]
+            dataset = f["timeseries/step_0/point_data/temperature"]
             assert dataset.compression == "gzip"
             assert dataset.compression_opts == 9
 
     def test_no_compression(self, temp_dir, sample_vts_files):
         """Test conversion without compression."""
         output_h5 = temp_dir / "output.h5"
-        output_xdmf = temp_dir / "output.xdmf2"
+        output_xdmf = temp_dir / "output.xdmf"
 
         convert_vts_to_hdf5(
             input_files=sample_vts_files,
@@ -203,13 +204,13 @@ class TestConvertVTSToHDF5:
         )
 
         with h5py.File(output_h5, "r") as f:
-            dataset = f["step_0/point_data/temperature"]
+            dataset = f["timeseries/step_0/point_data/temperature"]
             assert dataset.compression is None
 
     def test_sequential_processing(self, temp_dir, sample_vts_files):
         """Test sequential processing (jobs=1)."""
         output_h5 = temp_dir / "output.h5"
-        output_xdmf = temp_dir / "output.xdmf2"
+        output_xdmf = temp_dir / "output.xdmf"
 
         stats = convert_vts_to_hdf5(
             input_files=sample_vts_files,
@@ -225,7 +226,7 @@ class TestConvertVTSToHDF5:
     def test_parallel_processing(self, temp_dir, sample_vts_files):
         """Test parallel processing (jobs=2)."""
         output_h5 = temp_dir / "output.h5"
-        output_xdmf = temp_dir / "output.xdmf2"
+        output_xdmf = temp_dir / "output.xdmf"
 
         stats = convert_vts_to_hdf5(
             input_files=sample_vts_files,
@@ -241,7 +242,7 @@ class TestConvertVTSToHDF5:
     def test_auto_jobs(self, temp_dir, sample_vts_files):
         """Test automatic job detection (jobs=0)."""
         output_h5 = temp_dir / "output.h5"
-        output_xdmf = temp_dir / "output.xdmf2"
+        output_xdmf = temp_dir / "output.xdmf"
 
         stats = convert_vts_to_hdf5(
             input_files=sample_vts_files,
@@ -257,7 +258,7 @@ class TestConvertVTSToHDF5:
     def test_statistics(self, temp_dir, sample_vts_files):
         """Test conversion statistics."""
         output_h5 = temp_dir / "output.h5"
-        output_xdmf = temp_dir / "output.xdmf2"
+        output_xdmf = temp_dir / "output.xdmf"
 
         stats = convert_vts_to_hdf5(
             input_files=sample_vts_files,
@@ -278,7 +279,7 @@ class TestConvertVTSToHDF5:
     def test_verbose_mode(self, temp_dir, sample_vts_files):
         """Test conversion with verbose mode."""
         output_h5 = temp_dir / "output.h5"
-        output_xdmf = temp_dir / "output.xdmf2"
+        output_xdmf = temp_dir / "output.xdmf"
 
         stats = convert_vts_to_hdf5(
             input_files=sample_vts_files,
@@ -295,7 +296,7 @@ class TestConvertVTSToHDF5:
     def test_xdmf_generation(self, temp_dir, sample_vts_files):
         """Test that XDMF file is generated correctly."""
         output_h5 = temp_dir / "output.h5"
-        output_xdmf = temp_dir / "output.xdmf2"
+        output_xdmf = temp_dir / "output.xdmf"
 
         convert_vts_to_hdf5(
             input_files=sample_vts_files,

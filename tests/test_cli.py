@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from vts2h5.cli import (
+    default_output_name,
     display_folder_info,
     find_vts_files,
     parse_args,
@@ -181,6 +182,25 @@ class TestFindVTSFiles:
         assert all(f.suffix == ".vts" for f in files)
 
 
+class TestDefaultOutputName:
+    """Test cases for default output name resolution."""
+
+    def test_regular_folder(self, tmp_path):
+        """Test that a regular folder keeps its name."""
+        folder = tmp_path / "data" / "test1"
+        folder.mkdir(parents=True)
+
+        assert default_output_name(folder) == "test1"
+
+    def test_current_directory(self):
+        """Test that '.' resolves to the current directory name."""
+        assert default_output_name(Path(".")) == Path.cwd().resolve().name
+
+    def test_parent_directory(self):
+        """Test that '..' resolves to the parent directory name."""
+        assert default_output_name(Path("..")) == Path.cwd().resolve().parent.name
+
+
 class TestDisplayFolderInfo:
     """Test cases for display_folder_info function."""
 
@@ -234,7 +254,7 @@ class TestCLIIntegration:
         from vts2h5.cli import convert_folder
 
         output_h5 = temp_dir / "output.h5"
-        output_xdmf = temp_dir / "output.xdmf2"
+        output_xdmf = temp_dir / "output.xdmf"
 
         # Should complete without errors
         convert_folder(
@@ -256,7 +276,7 @@ class TestCLIIntegration:
         from vts2h5.cli import convert_folder
 
         output_h5 = temp_dir / "output.h5"
-        output_xdmf = temp_dir / "output.xdmf2"
+        output_xdmf = temp_dir / "output.xdmf"
 
         convert_folder(
             input_files=sample_vts_files,
@@ -278,7 +298,7 @@ class TestCLIIntegration:
         from vts2h5.cli import convert_folder
 
         output_h5 = temp_dir / "output.h5"
-        output_xdmf = temp_dir / "output.xdmf2"
+        output_xdmf = temp_dir / "output.xdmf"
 
         convert_folder(
             input_files=sample_vts_files,

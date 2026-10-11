@@ -5,40 +5,42 @@ import re
 import sys
 from pathlib import Path
 
+from vts2h5 import __version__
+
 
 def parse_args():
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Convert VTK Structured Grid (VTS) files from a folder to HDF5 with XDMF2 descriptors",
+        description="Convert VTK Structured Grid (VTS) files from a folder to HDF5 with XDMF3 descriptors",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Convert data/test1 folder, output test1.h5 and test1.xdmf2 in current directory
-  vts2h5 data/test1
+  # Convert folder `data`, output test1.h5 and test1.xdmf in current directory
+  vts2h5 data
 
   # Output in the same folder as input
-  vts2h5 data/test1 -i
+  vts2h5 data -i
 
   # Output to a specific folder
-  vts2h5 data/test1 -o results/
+  vts2h5 data -o results/
 
   # Use 4 parallel workers for faster conversion
-  vts2h5 data/test1 -j 4
+  vts2h5 data -j 4
 
   # Use all available CPU cores
-  vts2h5 data/test1 -j 0
+  vts2h5 data -j 0
 
   # Silent mode (no progress bar, minimal output)
-  vts2h5 data/test1 -s
+  vts2h5 data -s
 
   # Verbose mode (show grid info and detailed stats)
-  vts2h5 data/test1 -v
+  vts2h5 data -v
 
   # Custom output name with parallel processing
-  vts2h5 data/test1 --output-name simulation -j 4
+  vts2h5 data --output-name simulation -j 4
 
   # Show folder info without conversion
-  vts2h5 data/test1 --info
+  vts2h5 data --info
         """,
     )
 
@@ -105,10 +107,28 @@ Examples:
     parser.add_argument(
         "--version",
         action="version",
-        version="%(prog)s 1.0.0",
+        version=f"%(prog)s {__version__}",
     )
 
+    parser.add_argument(
+        "--float-dtype",
+        choices=["preserve", "float32", "float64"],
+        default="preserve",
+        help="Floating-point field storage (default: preserve). Geometry stays float64; "
+        "integers retain their type. float16 is unsupported by the XDMF3 reader.",
+    )
     return parser.parse_args()
+
+
+def default_output_name(input_folder: Path) -> str:
+    """
+    Return the default output name derived from the input folder.
+
+    ``Path(".").name`` is empty for the current directory, so resolve the
+    folder first and fall back to its directory name.
+    """
+    name = input_folder.resolve().name
+    return name or "output"
 
 
 def find_vts_files(folder: Path) -> list[Path]:
@@ -196,6 +216,7 @@ def convert_folder(
     silent: bool,
     verbose: bool,
     jobs: int = 0,
+    float_dtype: str = "preserve",
 ) -> None:
     """Convert all VTS files in a folder to HDF5 as a time series."""
     from vts2h5.converter import convert_vts_to_hdf5
@@ -210,6 +231,7 @@ def convert_folder(
         jobs=jobs,
         silent=silent,
         verbose=verbose,
+        float_dtype=float_dtype,
     )
 
     # Display results
@@ -264,7 +286,9 @@ def main():
     input_files = find_vts_files(input_folder)
 
     # Determine output name (default to input folder name)
-    output_name = args.output_name if args.output_name else input_folder.name
+    output_name = (
+        args.output_name if args.output_name else default_output_name(input_folder)
+    )
 
     # Determine output folder
     if args.use_input_folder:
@@ -280,7 +304,7 @@ def main():
 
     # Build output file paths
     output_h5 = output_folder / f"{output_name}.h5"
-    output_xdmf = output_folder / f"{output_name}.xdmf2"
+    output_xdmf = output_folder / f"{output_name}.xdmf"
 
     if not args.silent:
         print(f"Converting {len(input_files)} VTS files from {input_folder}")
@@ -299,6 +323,7 @@ def main():
         args.silent,
         args.verbose,
         args.jobs,
+        args.float_dtype,
     )
 
 

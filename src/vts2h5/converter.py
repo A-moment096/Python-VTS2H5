@@ -71,19 +71,21 @@ def convert_vts_to_hdf5(
     jobs: int = 0,
     silent: bool = False,
     verbose: bool = False,
+    float_dtype: str = "preserve",
 ) -> dict[str, Any]:
     """
-    Convert VTS files to HDF5 with XDMF2 descriptor.
+    Convert VTS files to HDF5 with XDMF3 descriptor.
 
     Args:
         input_files: List of VTS file paths
         output_file: Output HDF5 file path
-        xdmf_output: Output XDMF2 file path
+        xdmf_output: Output XDMF3 file path
         compression: Compression algorithm (gzip, lzf, none)
         compression_level: Compression level for gzip (0-9)
         jobs: Number of parallel workers (0 for auto)
         silent: Suppress all output
         verbose: Show detailed information
+        float_dtype: Floating field storage: preserve, float32, or float64
 
     Returns:
         Dictionary with conversion statistics
@@ -94,14 +96,18 @@ def convert_vts_to_hdf5(
     from tqdm import tqdm
 
     from vts2h5.reader import VTSReader
-    from vts2h5.writer import HDF5Writer
+    from vts2h5.writer import TIMESERIES_GROUP, HDF5Writer
     from vts2h5.xdmf import XDMFGenerator
 
     try:
         comp = None if compression == "none" else compression
         comp_opts = None if compression == "none" else compression_level
         writer = HDF5Writer(
-            str(output_file), compression=comp, compression_opts=comp_opts
+            str(output_file),
+            compression=comp,
+            compression_opts=comp_opts,
+            group=TIMESERIES_GROUP,
+            float_dtype=float_dtype,
         )
 
         total_original_size = 0
@@ -110,6 +116,8 @@ def convert_vts_to_hdf5(
 
         # Extract time steps from filenames
         time_steps = extract_time_steps(input_files)
+        if len(set(time_steps)) != len(time_steps):
+            raise ValueError("Duplicate time steps in input filenames")
 
         # Determine number of processes
         if jobs == 0:
@@ -172,10 +180,6 @@ def convert_vts_to_hdf5(
                 reader = VTSReader(str(input_files[0]))
                 first_grid_info = reader.get_info()
 
-            # Write to HDF5 (sequential, HDF5 is not thread-safe)
-            if not silent:
-                print("Writing to HDF5...")
-
             iterator = enumerate(grid_data_list)
             if not silent:
                 iterator = tqdm(
@@ -185,8 +189,19 @@ def convert_vts_to_hdf5(
                     unit="file",
                 )
 
-            for i, grid_data in iterator:
-                writer.write(grid_data, time_step=time_steps[i])
+            try:
+                for i, grid_data in iterator:
+                    writer.write(grid_data, time_step=time_steps[i])
+            except Exception as e:
+                print(f"\n✗ Error writing HDF5 file: {e}", file=sys.stderr)
+                print(
+                    "Conversion aborted. Cleaning up partial output...",
+                    file=sys.stderr,
+                )
+                writer.close()
+                if output_file.exists():
+                    output_file.unlink(missing_ok=True)
+                sys.exit(1)
 
         else:
             # Sequential processing
@@ -196,9 +211,11 @@ def convert_vts_to_hdf5(
                 else tqdm(input_files, desc="Converting files", unit="file")
             )
             reference_dims = None
+            current_name = "<unknown>"
 
             try:
                 for i, input_file in enumerate(iterator):
+                    current_name = input_file.name
                     reader = VTSReader(str(input_file))
                     grid_data = reader.read()
 
@@ -231,7 +248,7 @@ def convert_vts_to_hdf5(
                     total_original_size += input_file.stat().st_size
 
             except Exception as e:
-                print(f"\n✗ Error reading {input_file.name}: {e}", file=sys.stderr)
+                print(f"\n✗ Error reading {current_name}: {e}", file=sys.stderr)
                 print(
                     "Conversion aborted. Cleaning up partial output...", file=sys.stderr
                 )
@@ -245,7 +262,7 @@ def convert_vts_to_hdf5(
         # Generate XDMF descriptor
         if first_grid_data:
             if not silent:
-                print("Generating XDMF2 descriptor...")
+                print("Generating XDMF3 descriptor...")
 
             XDMFGenerator.generate_temporal_collection(
                 str(output_file),
@@ -255,6 +272,7 @@ def convert_vts_to_hdf5(
                 dimensions=first_grid_data["dimensions"],
                 point_arrays=list(first_grid_data["point_data"].keys()),
                 cell_arrays=list(first_grid_data["cell_data"].keys()),
+                hdf5_group=TIMESERIES_GROUP,
             )
 
         # Calculate statistics

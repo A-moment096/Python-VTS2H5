@@ -49,8 +49,7 @@ Thumbs.db
 
 # Data files
 *.h5
-*.xdmf
-*.xdmf2
+*.xdmf*
 
 # Keep example data directory structure but ignore generated files
 !data/**/.gitkeep

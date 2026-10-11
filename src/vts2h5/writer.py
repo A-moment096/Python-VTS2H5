@@ -1,152 +1,211 @@
-"""HDF5 file writer module."""
+"""HDF5 storage for fixed, axis-aligned uniform grids and XDMF3 fields."""
 
+import json
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import h5py
 import numpy as np
 
+TIMESERIES_GROUP = "timeseries"
+FLOAT_DTYPES = ("preserve", "float32", "float64")
+
+
+def uniform_geometry(grid_data):
+    """Validate actual VTS coordinates; return dimensions and XYZ geometry."""
+    dims = np.asarray(grid_data["dimensions"])
+    if dims.shape != (3,) or dims.dtype.kind not in "iu" or np.any(dims < 1):
+        raise ValueError("Grid dimensions must be three positive integers")
+    nx, ny, nz = map(int, dims)
+    points = np.asarray(grid_data["points"])
+    if points.shape != (nx * ny * nz, 3) or not np.all(np.isfinite(points)):
+        raise ValueError("Grid must contain one finite XYZ coordinate per point")
+    coords = points.reshape(nz, ny, nx, 3)
+    origin = points[0].astype(np.float64)
+    spacing = np.ones(3, dtype=np.float64)
+    axes = (coords[0, 0, :, 0], coords[0, :, 0, 1], coords[:, 0, 0, 2])
+    epsilon = np.finfo(points.dtype).eps if points.dtype.kind == "f" else 0
+    for axis, (size, values) in enumerate(zip(dims, axes)):
+        if size > 1:
+            spacing[axis] = (float(values[-1]) - origin[axis]) / (size - 1)
+            if spacing[axis] == 0:
+                raise ValueError("A populated grid axis cannot have zero spacing")
+        expected = origin[axis] + np.arange(size) * spacing[axis]
+        # Local coordinate rounding only: another axis or the choice of units
+        # must not permit flattening a physically nonuniform grid.
+        spacing_scale = abs(spacing[axis]) if size > 1 else 0
+        tolerance = 2 * epsilon * np.maximum(np.abs(expected), spacing_scale)
+        shape = [1, 1, 1]
+        shape[2 - axis] = size
+        if not np.allclose(
+            coords[..., axis],
+            expected.reshape(shape),
+            rtol=0,
+            atol=tolerance.reshape(shape),
+        ):
+            raise ValueError(
+                "Only axis-aligned uniformly spaced grids are supported; "
+                "nonuniform or curvilinear coordinates cannot use 3DCoRectMesh"
+            )
+    return tuple(map(int, dims)), origin, spacing
+
 
 class HDF5Writer:
-    """Writer for HDF5 files."""
+    """Write ZYX geometry/fields; precision conversion affects float fields only."""
 
     def __init__(
         self,
         filepath: str,
         compression: Optional[str] = "gzip",
-        compression_opts: int = 4,
+        compression_opts: Optional[int] = 4,
         mode: str = "w",
+        group: Optional[str] = None,
+        float_dtype: str = "preserve",
     ):
-        """
-        Initialize HDF5 writer.
-
-        Args:
-            filepath: Path to the output HDF5 file
-            compression: Compression algorithm ('gzip', 'lzf', or None)
-            compression_opts: Compression level (0-9 for gzip)
-            mode: File mode ('w' for write, 'a' for append)
-        """
+        if float_dtype not in FLOAT_DTYPES:
+            raise ValueError(
+                f"Unsupported floating-point storage {float_dtype!r}; "
+                "use preserve, float32, or float64. "
+                "float16 is not supported by ParaView's XDMF3 reader."
+            )
+        if compression not in (None, "gzip", "lzf"):
+            raise ValueError(f"Unsupported compression: {compression}")
         self.filepath = Path(filepath)
         self.compression = compression
-        # Set compression_opts to None if compression is None
-        self.compression_opts = None if compression is None else compression_opts
+        self.compression_opts = compression_opts if compression == "gzip" else None
         self.mode = mode
+        self.group = (group or "").strip("/")
+        self.float_dtype = float_dtype
         self.file: Optional[h5py.File] = None
 
     def __enter__(self):
-        """Context manager entry."""
         self.file = h5py.File(self.filepath, self.mode)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit."""
-        if self.file:
-            self.file.close()
+        self.close()
+
+    def _prepare_fields(self, grid_data, dims):
+        fields = {}
+        for center in ("point_data", "cell_data"):
+            shape = (
+                tuple(reversed(dims))
+                if center == "point_data"
+                else tuple(max(1, d - 1) for d in reversed(dims))
+            )
+            count = int(np.prod(shape))
+            for name, values in grid_data[center].items():
+                if not name or "/" in name:
+                    raise ValueError(f"Invalid field name: {name!r}")
+                array = np.asarray(values)
+                if array.ndim not in (1, 2) or array.shape[0] != count:
+                    raise ValueError(
+                        f"{center}/{name}: expected {count} tuples, got {array.shape}"
+                    )
+                if array.dtype.kind == "b":
+                    array = array.astype(np.uint8)
+                if array.dtype.kind not in "fiu" or array.dtype.itemsize not in (
+                    1,
+                    2,
+                    4,
+                    8,
+                ):
+                    raise ValueError(
+                        f"{center}/{name}: unsupported dtype {array.dtype}"
+                    )
+                if array.dtype.kind == "f":
+                    if array.dtype.itemsize not in (4, 8):
+                        raise ValueError(
+                            f"{center}/{name}: float16 is unsupported by XDMF3"
+                        )
+                    if self.float_dtype != "preserve":
+                        with np.errstate(over="ignore", invalid="ignore"):
+                            converted = array.astype(self.float_dtype)
+                        if np.any(np.isfinite(array) & ~np.isfinite(converted)):
+                            raise ValueError(
+                                f"{center}/{name}: {self.float_dtype} overflow"
+                            )
+                        array = converted
+                components = 1 if array.ndim == 1 else array.shape[1]
+                if components not in (1, 3, 6, 9):
+                    raise ValueError(
+                        f"{center}/{name}: supported component counts are 1, 3, 6, 9"
+                    )
+                fields[f"{center}/{name}"] = array.reshape(
+                    shape if components == 1 else (*shape, components)
+                )
+        return fields
 
     def write(self, grid_data: dict[str, Any], time_step: Optional[int] = None) -> None:
-        """
-        Write grid data to HDF5 file.
-
-        Args:
-            grid_data: Dictionary containing grid data from VTSReader
-            time_step: Optional time step index for time series data
-        """
-        if self.file is None:
-            self.file = h5py.File(self.filepath, self.mode)
-
+        """Validate a frame before adding it; frames share geometry and schema."""
         try:
-            # Write origin and spacing at root level (only once)
-            if "origin" not in self.file and "bounds" in grid_data:
-                bounds = grid_data["bounds"]
-                dims = grid_data["dimensions"]
-
-                # Calculate origin from bounds
-                origin = np.array([bounds[0], bounds[2], bounds[4]], dtype=np.float64)
+            dims, origin, spacing = uniform_geometry(grid_data)
+            fields = self._prepare_fields(grid_data, dims)
+            schema = json.dumps(
+                {
+                    name: [list(a.shape), a.dtype.str]
+                    for name, a in sorted(fields.items())
+                },
+                sort_keys=True,
+            )
+            if self.file is None:
+                self.file = h5py.File(self.filepath, self.mode)
+            if "origin" in self.file:
+                if self.file.attrs.get("coordinate_order") != "ZYX":
+                    raise ValueError(
+                        "Cannot append to an older XYZ-layout HDF5 file; reconvert it"
+                    )
+                if (
+                    tuple(np.asarray(self.file.attrs["dimensions"])) != dims
+                    or not np.array_equal(
+                        cast(h5py.Dataset, self.file["origin"])[:], origin[::-1]
+                    )
+                    or not np.array_equal(
+                        cast(h5py.Dataset, self.file["spacing"])[:], spacing[::-1]
+                    )
+                ):
+                    raise ValueError("Grid geometry changes between time steps")
+                if self.file.attrs["field_schema"] != schema:
+                    raise ValueError(
+                        "Field names, shapes or storage types change between time steps"
+                    )
+            else:
+                self.file.attrs["coordinate_order"] = "ZYX"
+                self.file.attrs["dimensions"] = dims
+                self.file.attrs["field_schema"] = schema
+                self.file.attrs["float_dtype"] = self.float_dtype
+                for name, data in (
+                    ("origin", origin[::-1]),
+                    ("spacing", spacing[::-1]),
+                ):
+                    self.file.create_dataset(
+                        name,
+                        data=data,
+                        compression=self.compression,
+                        compression_opts=self.compression_opts,
+                    )
+            base = f"{self.group}/" if self.group else ""
+            prefix = f"{base}step_{time_step}/" if time_step is not None else base
+            if any(prefix + name in self.file for name in fields):
+                raise ValueError(f"Frame already exists: {time_step}")
+            for name, array in fields.items():
                 self.file.create_dataset(
-                    "origin",
-                    data=origin,
+                    prefix + name,
+                    data=array,
                     compression=self.compression,
                     compression_opts=self.compression_opts,
                 )
-
-                # Calculate spacing from bounds and dimensions
-                spacing = np.array(
-                    [
-                        (bounds[1] - bounds[0]) / max(1, dims[0] - 1),
-                        (bounds[3] - bounds[2]) / max(1, dims[1] - 1),
-                        (
-                            (bounds[5] - bounds[4]) / max(1, dims[2] - 1)
-                            if dims[2] > 1
-                            else 0.0
-                        ),
-                    ],
-                    dtype=np.float64,
-                )
-                self.file.create_dataset(
-                    "spacing",
-                    data=spacing,
-                    compression=self.compression,
-                    compression_opts=self.compression_opts,
-                )
-
-            # Determine group prefix for time series
-            prefix = f"step_{time_step}/" if time_step is not None else ""
-
-            # Write point data
-            if grid_data["point_data"]:
-                point_data_group = self.file.require_group(f"{prefix}point_data")
-                for name, array in grid_data["point_data"].items():
-                    if name not in point_data_group:
-                        # Reshape to 3D array in Z,Y,X order for XDMF compatibility
-                        dims = grid_data["dimensions"]
-                        nx, ny, nz = dims[0], dims[1], dims[2]
-                        reshaped = array.reshape((nz, ny, nx))
-                        point_data_group.create_dataset(
-                            name,
-                            data=reshaped,
-                            compression=self.compression,
-                            compression_opts=self.compression_opts,
-                        )
-
-            # Write cell data
-            if grid_data["cell_data"]:
-                cell_data_group = self.file.require_group(f"{prefix}cell_data")
-                for name, array in grid_data["cell_data"].items():
-                    if name not in cell_data_group:
-                        cell_data_group.create_dataset(
-                            name,
-                            data=array,
-                            compression=self.compression,
-                            compression_opts=self.compression_opts,
-                        )
-
         except Exception as e:
             raise RuntimeError(f"Failed to write HDF5 file: {e}") from e
 
     def close(self) -> None:
-        """Close the HDF5 file."""
-        if self.file:
+        if self.file is not None:
             self.file.close()
             self.file = None
 
     def write_multiple(self, grid_data_list: list, start_index: int = 0) -> None:
-        """
-        Write multiple time steps to HDF5 file.
-
-        Args:
-            grid_data_list: List of grid data dictionaries
-            start_index: Starting time step index
-        """
         for i, grid_data in enumerate(grid_data_list):
             self.write(grid_data, time_step=start_index + i)
 
     def get_file_size(self) -> int:
-        """
-        Get the size of the HDF5 file in bytes.
-
-        Returns:
-            File size in bytes
-        """
-        if self.filepath.exists():
-            return self.filepath.stat().st_size
-        return 0
+        return self.filepath.stat().st_size if self.filepath.exists() else 0

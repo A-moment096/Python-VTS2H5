@@ -1,24 +1,27 @@
-"""XDMF2 file generator module."""
+"""XDMF3 descriptors derived from the HDF5 datasets they describe."""
 
+import math
+import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
+import h5py
+import numpy as np
 from lxml import etree
 
 
 class XDMFGenerator:
-    """Generator for XDMF2 descriptor files matching C++ MInDes-VTS2H5 implementation."""
+    """Describe uniform-grid HDF5 output in ParaView XDMF3 ordering."""
 
-    def __init__(self, hdf5_filepath: str, grid_data: Optional[dict[str, Any]] = None):
-        """
-        Initialize XDMF generator.
-
-        Args:
-            hdf5_filepath: Path to the HDF5 file
-            grid_data: Optional grid data dictionary from VTSReader
-        """
+    def __init__(
+        self,
+        hdf5_filepath: str,
+        grid_data: Optional[dict[str, Any]] = None,
+        hdf5_group: str = "",
+    ):
         self.hdf5_filepath = Path(hdf5_filepath)
         self.grid_data = grid_data
+        self.hdf5_group = hdf5_group.strip("/")
 
     def generate(
         self,
@@ -26,212 +29,164 @@ class XDMFGenerator:
         time_steps: Optional[list[int]] = None,
         time_values: Optional[list[float]] = None,
     ) -> None:
-        """
-        Generate XDMF2 file using 3DRectMesh topology with ORIGIN_DXDYDZ geometry.
+        """Write a static grid or temporal collection, including one-frame series."""
+        self._generate(
+            output_filepath,
+            time_steps,
+            time_values,
+            self.grid_data["dimensions"] if self.grid_data else None,
+            list(self.grid_data["point_data"]) if self.grid_data else None,
+            list(self.grid_data["cell_data"]) if self.grid_data else None,
+        )
 
-        Args:
-            output_filepath: Path for the output XDMF file
-            time_steps: Optional list of time step indices for time series
-            time_values: Optional list of actual time values
-        """
-        output_path = Path(output_filepath)
+    def _step_prefix(self, time_step):
+        base = f"{self.hdf5_group}/" if self.hdf5_group else ""
+        return base if time_step is None else f"{base}step_{time_step}/"
 
-        # Create XDMF structure
-        xdmf = etree.Element("Xdmf", Version="3.0")
-        domain = etree.SubElement(xdmf, "Domain")
+    @staticmethod
+    def _data_item(parent, dataset, reference, name=None):
+        kind = dataset.dtype.kind
+        number_type = {"f": "Float", "i": "Int", "u": "UInt"}.get(kind)
+        if number_type is None or (
+            kind == "f" and dataset.dtype.itemsize not in (4, 8)
+        ):
+            raise ValueError(f"Unsupported XDMF3 dtype: {dataset.dtype}")
+        props = {
+            "Dimensions": " ".join(map(str, dataset.shape)),
+            "NumberType": number_type,
+            "Precision": str(dataset.dtype.itemsize),
+            "Format": "HDF",
+        }
+        if name is not None:
+            props["Name"] = name
+        item = etree.SubElement(parent, "DataItem", attrib=props)
+        item.text = reference
 
-        if time_steps is not None and len(time_steps) > 1:
-            # Time series
-            collection = etree.SubElement(
+    def _generate(
+        self,
+        output_filepath,
+        time_steps,
+        time_values,
+        dimensions,
+        point_arrays,
+        cell_arrays,
+    ):
+        output = Path(output_filepath)
+        if time_steps is not None:
+            if not time_steps or len(set(time_steps)) != len(time_steps):
+                raise ValueError("Time steps must be nonempty and unique")
+            values = (
+                [float(s) for s in time_steps] if time_values is None else time_values
+            )
+            if len(values) != len(time_steps) or not all(
+                math.isfinite(v) for v in values
+            ):
+                raise ValueError("Provide one finite time value per time step")
+            if any(b <= a for a, b in zip(values, values[1:])):
+                raise ValueError("Time values must be strictly increasing")
+        else:
+            if time_values is not None:
+                raise ValueError("time_values requires time_steps")
+            values = [None]
+        # References are relative to the descriptor, not the current directory.
+        try:
+            relative_h5 = os.path.relpath(
+                self.hdf5_filepath.resolve(), output.parent.resolve()
+            )
+        except ValueError:  # Different Windows drives require an absolute path.
+            relative_h5 = str(self.hdf5_filepath.resolve())
+        reference = Path(relative_h5).as_posix()
+        root = etree.Element("Xdmf", Version="3.0")
+        domain = etree.SubElement(root, "Domain")
+        parent = (
+            domain
+            if time_steps is None
+            else etree.SubElement(
                 domain,
                 "Grid",
                 Name="TimeSeries",
                 GridType="Collection",
                 CollectionType="Temporal",
             )
-
-            for i, step in enumerate(time_steps):
-                time_val = time_values[i] if time_values else float(step)
-                self._add_grid_to_collection(collection, step, time_val)
-        else:
-            # Single time step
-            step = time_steps[0] if time_steps else None
-            self._add_single_grid(domain, step)
-
-        # Write to file
-        tree = etree.ElementTree(xdmf)
-        tree.write(
-            str(output_path),
-            pretty_print=True,
-            xml_declaration=True,
-            encoding="utf-8",
         )
-
-    def _add_single_grid(self, parent, time_step: Optional[int] = None) -> None:
-        """Add a single grid using 3DRectMesh topology."""
-        if self.grid_data is None:
-            raise ValueError("Grid data is required for single grid generation")
-
-        prefix = f"step_{time_step}/" if time_step is not None else ""
-
-        grid = etree.SubElement(
-            parent, "Grid", Name="StructuredGrid", GridType="Uniform"
+        with h5py.File(self.hdf5_filepath, "r") as h5:
+            if h5.attrs.get("coordinate_order") != "ZYX":
+                raise ValueError(
+                    "HDF5 geometry is not marked ZYX; reconvert the source VTS files"
+                )
+            dims = tuple(map(int, np.asarray(h5.attrs["dimensions"])))
+            if dimensions is not None and tuple(dimensions) != dims:
+                raise ValueError("Descriptor dimensions disagree with HDF5 geometry")
+            for step, time in zip([None] if time_steps is None else time_steps, values):
+                grid = etree.SubElement(
+                    parent,
+                    "Grid",
+                    Name="StructuredGrid" if step is None else f"Step_{step}",
+                    GridType="Uniform",
+                )
+                if time is not None:
+                    etree.SubElement(grid, "Time", Value=format(float(time), ".17g"))
+                etree.SubElement(
+                    grid,
+                    "Topology",
+                    TopologyType="3DCoRectMesh",
+                    Dimensions=" ".join(map(str, reversed(dims))),
+                )
+                geometry = etree.SubElement(
+                    grid, "Geometry", GeometryType="ORIGIN_DXDYDZ"
+                )
+                for label in ("Origin", "Spacing"):
+                    dataset = h5[label.lower()]
+                    self._data_item(
+                        geometry, dataset, f"{reference}:/{label.lower()}", label
+                    )
+                prefix = self._step_prefix(step)
+                for center, group_name, selected in (
+                    ("Node", "point_data", point_arrays),
+                    ("Cell", "cell_data", cell_arrays),
+                ):
+                    group_path = prefix + group_name
+                    names = (
+                        list(cast(h5py.Group, h5[group_path]))
+                        if selected is None and group_path in h5
+                        else (selected or [])
+                    )
+                    expected_shape = (
+                        tuple(reversed(dims))
+                        if center == "Node"
+                        else tuple(max(1, d - 1) for d in reversed(dims))
+                    )
+                    for name in names:
+                        dataset = cast(h5py.Dataset, h5[f"{group_path}/{name}"])
+                        if (
+                            dataset.ndim not in (3, 4)
+                            or dataset.shape[:3] != expected_shape
+                        ):
+                            raise ValueError(
+                                f"Invalid field shape: {dataset.name}: {dataset.shape}"
+                            )
+                        components = dataset.shape[-1] if dataset.ndim == 4 else 1
+                        attribute_type = {
+                            1: "Scalar",
+                            3: "Vector",
+                            6: "Tensor6",
+                            9: "Tensor",
+                        }.get(components)
+                        if attribute_type is None:
+                            raise ValueError(
+                                f"Unsupported component count: {components}"
+                            )
+                        attr = etree.SubElement(
+                            grid,
+                            "Attribute",
+                            Name=name,
+                            AttributeType=attribute_type,
+                            Center=center,
+                        )
+                        self._data_item(attr, dataset, f"{reference}:{dataset.name}")
+        etree.ElementTree(root).write(
+            str(output), pretty_print=True, xml_declaration=True, encoding="utf-8"
         )
-
-        # Add topology - always use 3DRectMesh
-        dims = self.grid_data["dimensions"]
-        nx, ny, nz = dims[0], dims[1], dims[2]
-        etree.SubElement(
-            grid,
-            "Topology",
-            TopologyType="3DRectMesh",
-            Dimensions=f"{nz} {ny} {nx}",  # Z Y X order
-        )
-
-        # Add geometry with ORIGIN_DXDYDZ
-        geometry = etree.SubElement(grid, "Geometry", GeometryType="ORIGIN_DXDYDZ")
-
-        # Origin DataItem
-        origin_item = etree.SubElement(
-            geometry,
-            "DataItem",
-            Name="Origin",
-            Dimensions="3",
-            NumberType="Float",
-            Precision="8",
-            Format="HDF",
-        )
-        origin_item.text = f"{self.hdf5_filepath.name}:/origin"
-
-        # Spacing DataItem
-        spacing_item = etree.SubElement(
-            geometry,
-            "DataItem",
-            Name="Spacing",
-            Dimensions="3",
-            NumberType="Float",
-            Precision="8",
-            Format="HDF",
-        )
-        spacing_item.text = f"{self.hdf5_filepath.name}:/spacing"
-
-        # Add point data attributes
-        for name, _ in self.grid_data["point_data"].items():
-            self._add_point_attribute(grid, name, dims, prefix)
-
-        # Add cell data attributes
-        for name, _ in self.grid_data["cell_data"].items():
-            self._add_cell_attribute(grid, name, dims, prefix)
-
-    def _add_grid_to_collection(
-        self, collection, time_step: int, time_value: float
-    ) -> None:
-        """Add a grid to a temporal collection using 3DRectMesh topology."""
-        prefix = f"step_{time_step}/"
-
-        grid = etree.SubElement(
-            collection, "Grid", Name=f"Step_{time_step}", GridType="Uniform"
-        )
-
-        # Add time information
-        etree.SubElement(grid, "Time", Value=str(int(time_value)))
-
-        # Add topology - always use 3DRectMesh
-        if self.grid_data:
-            dims = self.grid_data["dimensions"]
-            nx, ny, nz = dims[0], dims[1], dims[2]
-            etree.SubElement(
-                grid,
-                "Topology",
-                TopologyType="3DRectMesh",
-                Dimensions=f"{nz} {ny} {nx}",  # Z Y X order
-            )
-
-            # Add geometry with ORIGIN_DXDYDZ
-            geometry = etree.SubElement(grid, "Geometry", GeometryType="ORIGIN_DXDYDZ")
-
-            # Origin DataItem
-            origin_item = etree.SubElement(
-                geometry,
-                "DataItem",
-                Name="Origin",
-                Dimensions="3",
-                NumberType="Float",
-                Precision="8",
-                Format="HDF",
-            )
-            origin_item.text = f"{self.hdf5_filepath.name}:/origin"
-
-            # Spacing DataItem
-            spacing_item = etree.SubElement(
-                geometry,
-                "DataItem",
-                Name="Spacing",
-                Dimensions="3",
-                NumberType="Float",
-                Precision="8",
-                Format="HDF",
-            )
-            spacing_item.text = f"{self.hdf5_filepath.name}:/spacing"
-
-            # Add attributes from grid_data if available
-            for name in self.grid_data["point_data"].keys():
-                self._add_point_attribute(grid, name, dims, prefix)
-
-            for name in self.grid_data["cell_data"].keys():
-                self._add_cell_attribute(grid, name, dims, prefix)
-
-    def _add_point_attribute(
-        self,
-        grid,
-        name: str,
-        dimensions: tuple,
-        prefix: str = "",
-    ) -> None:
-        """Add a point/node data attribute to the grid."""
-        nx, ny, nz = dimensions[0], dimensions[1], dimensions[2]
-
-        attribute = etree.SubElement(
-            grid, "Attribute", Name=name, AttributeType="Scalar", Center="Node"
-        )
-
-        data_item = etree.SubElement(
-            attribute,
-            "DataItem",
-            Dimensions=f"{nz} {ny} {nx}",  # Z Y X order
-            NumberType="Float",
-            Precision="8",
-            Format="HDF",
-        )
-        data_item.text = f"{self.hdf5_filepath.name}:/{prefix}point_data/{name}"
-
-    def _add_cell_attribute(
-        self,
-        grid,
-        name: str,
-        dimensions: tuple,
-        prefix: str = "",
-    ) -> None:
-        """Add a cell data attribute to the grid."""
-        nx, ny, nz = dimensions[0], dimensions[1], dimensions[2]
-        # Cell dimensions are one less in each direction
-        cell_nx = max(1, nx - 1)
-        cell_ny = max(1, ny - 1)
-        cell_nz = max(1, nz - 1)
-
-        attribute = etree.SubElement(
-            grid, "Attribute", Name=name, AttributeType="Scalar", Center="Cell"
-        )
-
-        data_item = etree.SubElement(
-            attribute,
-            "DataItem",
-            Dimensions=f"{cell_nz} {cell_ny} {cell_nx}",  # Z Y X order
-            NumberType="Float",
-            Precision="8",
-            Format="HDF",
-        )
-        data_item.text = f"{self.hdf5_filepath.name}:/{prefix}cell_data/{name}"
 
     @staticmethod
     def generate_temporal_collection(
@@ -239,132 +194,18 @@ class XDMFGenerator:
         output_filepath: str,
         time_steps: list[int],
         time_values: Optional[list[float]] = None,
-        dimensions: tuple = (10, 10, 10),
+        dimensions: Optional[tuple] = None,
         point_arrays: Optional[list[str]] = None,
         cell_arrays: Optional[list[str]] = None,
+        hdf5_group: str = "",
     ) -> None:
-        """
-        Generate XDMF for time series using 3DRectMesh topology.
-
-        Args:
-            hdf5_filepath: Path to HDF5 file
-            output_filepath: Path for output XDMF file (should end in .xdmf2)
-            time_steps: List of time step values
-            time_values: Optional list of time values (defaults to time_steps)
-            dimensions: Grid dimensions (nx, ny, nz)
-            point_arrays: List of point array names
-            cell_arrays: List of cell array names
-        """
-        hdf5_path = Path(hdf5_filepath)
-        output_path = Path(output_filepath)
-
-        point_arrays = point_arrays or []
-        cell_arrays = cell_arrays or []
-        time_values = time_values or [float(s) for s in time_steps]
-
-        nx, ny, nz = dimensions[0], dimensions[1], dimensions[2]
-        cell_nx = max(1, nx - 1)
-        cell_ny = max(1, ny - 1)
-        cell_nz = max(1, nz - 1)
-
-        # Create XDMF structure
-        xdmf = etree.Element("Xdmf", Version="3.0")
-        domain = etree.SubElement(xdmf, "Domain")
-        collection = etree.SubElement(
-            domain,
-            "Grid",
-            Name="TimeSeries",
-            GridType="Collection",
-            CollectionType="Temporal",
-        )
-
-        for i, step in enumerate(time_steps):
-            time_val = time_values[i] if i < len(time_values) else float(step)
-            prefix = f"step_{step}/"
-
-            grid = etree.SubElement(
-                collection, "Grid", Name=f"Step_{step}", GridType="Uniform"
-            )
-            etree.SubElement(grid, "Time", Value=str(int(time_val)))
-
-            # Topology - always use 3DRectMesh
-            etree.SubElement(
-                grid,
-                "Topology",
-                TopologyType="3DRectMesh",
-                Dimensions=f"{nz} {ny} {nx}",  # Z Y X order
-            )
-
-            # Geometry with ORIGIN_DXDYDZ
-            geometry = etree.SubElement(grid, "Geometry", GeometryType="ORIGIN_DXDYDZ")
-
-            # Origin DataItem
-            origin_item = etree.SubElement(
-                geometry,
-                "DataItem",
-                Name="Origin",
-                Dimensions="3",
-                NumberType="Float",
-                Precision="8",
-                Format="HDF",
-            )
-            origin_item.text = f"{hdf5_path.name}:/origin"
-
-            # Spacing DataItem
-            spacing_item = etree.SubElement(
-                geometry,
-                "DataItem",
-                Name="Spacing",
-                Dimensions="3",
-                NumberType="Float",
-                Precision="8",
-                Format="HDF",
-            )
-            spacing_item.text = f"{hdf5_path.name}:/spacing"
-
-            # Point arrays
-            for arr_name in point_arrays:
-                attribute = etree.SubElement(
-                    grid,
-                    "Attribute",
-                    Name=arr_name,
-                    AttributeType="Scalar",
-                    Center="Node",
-                )
-                data_item = etree.SubElement(
-                    attribute,
-                    "DataItem",
-                    Dimensions=f"{nz} {ny} {nx}",  # Z Y X order
-                    NumberType="Float",
-                    Precision="8",
-                    Format="HDF",
-                )
-                data_item.text = f"{hdf5_path.name}:/{prefix}point_data/{arr_name}"
-
-            # Cell arrays
-            for arr_name in cell_arrays:
-                attribute = etree.SubElement(
-                    grid,
-                    "Attribute",
-                    Name=arr_name,
-                    AttributeType="Scalar",
-                    Center="Cell",
-                )
-                data_item = etree.SubElement(
-                    attribute,
-                    "DataItem",
-                    Dimensions=f"{cell_nz} {cell_ny} {cell_nx}",  # Z Y X order
-                    NumberType="Float",
-                    Precision="8",
-                    Format="HDF",
-                )
-                data_item.text = f"{hdf5_path.name}:/{prefix}cell_data/{arr_name}"
-
-        # Write to file
-        tree = etree.ElementTree(xdmf)
-        tree.write(
-            str(output_path),
-            pretty_print=True,
-            xml_declaration=True,
-            encoding="utf-8",
+        """Describe actual stored types/shapes; retain the existing public API."""
+        generator = XDMFGenerator(hdf5_filepath, hdf5_group=hdf5_group)
+        generator._generate(
+            output_filepath,
+            time_steps,
+            time_values,
+            dimensions,
+            point_arrays,
+            cell_arrays,
         )

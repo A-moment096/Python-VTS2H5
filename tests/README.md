@@ -13,6 +13,15 @@ This directory contains comprehensive tests for the vts2h5 package.
 
 ## Running Tests
 
+The XDMF3 regression tests validate geometry ordering, dataset metadata, precision conversion, and invalid inputs. Optional round-trip tests open generated files with ParaView in separate processes and compare their coordinates and point/cell arrays with the source VTS data. To enable them on Windows:
+
+```powershell
+$env:VTS2H5_PVPYTHON = 'C:\Program Files\ParaView 6.1.0\bin\pvpython.exe'
+pytest tests/test_paraview_roundtrip.py
+```
+
+Without this environment variable the ParaView tests are skipped; the remaining tests require only the normal project dependencies.
+
 ### Run all tests
 ```bash
 pytest

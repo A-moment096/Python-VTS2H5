@@ -31,7 +31,7 @@ class TestXDMFGenerator:
     def test_generate_single_grid(self, temp_dir, sample_grid_data):
         """Test generating XDMF for a single grid."""
         h5_file = temp_dir / "test.h5"
-        xdmf_file = temp_dir / "test.xdmf2"
+        xdmf_file = temp_dir / "test.xdmf"
 
         # First write HDF5 data
         with HDF5Writer(str(h5_file)) as writer:
@@ -46,7 +46,7 @@ class TestXDMFGenerator:
     def test_xdmf_structure(self, temp_dir, sample_grid_data):
         """Test basic XDMF XML structure."""
         h5_file = temp_dir / "test.h5"
-        xdmf_file = temp_dir / "test.xdmf2"
+        xdmf_file = temp_dir / "test.xdmf"
 
         with HDF5Writer(str(h5_file)) as writer:
             writer.write(sample_grid_data)
@@ -66,7 +66,7 @@ class TestXDMFGenerator:
     def test_single_grid_topology(self, temp_dir, sample_grid_data):
         """Test topology in single grid."""
         h5_file = temp_dir / "test.h5"
-        xdmf_file = temp_dir / "test.xdmf2"
+        xdmf_file = temp_dir / "test.xdmf"
 
         with HDF5Writer(str(h5_file)) as writer:
             writer.write(sample_grid_data)
@@ -78,7 +78,7 @@ class TestXDMFGenerator:
         topology = tree.find(".//Topology")
 
         assert topology is not None
-        assert topology.get("TopologyType") == "3DRectMesh"
+        assert topology.get("TopologyType") == "3DCoRectMesh"
 
         # Check dimensions (should be Z Y X order)
         dims = sample_grid_data["dimensions"]
@@ -88,7 +88,7 @@ class TestXDMFGenerator:
     def test_single_grid_geometry(self, temp_dir, sample_grid_data):
         """Test geometry with ORIGIN_DXDYDZ."""
         h5_file = temp_dir / "test.h5"
-        xdmf_file = temp_dir / "test.xdmf2"
+        xdmf_file = temp_dir / "test.xdmf"
 
         with HDF5Writer(str(h5_file)) as writer:
             writer.write(sample_grid_data)
@@ -113,7 +113,7 @@ class TestXDMFGenerator:
     def test_point_attributes(self, temp_dir, sample_grid_data):
         """Test point data attributes."""
         h5_file = temp_dir / "test.h5"
-        xdmf_file = temp_dir / "test.xdmf2"
+        xdmf_file = temp_dir / "test.xdmf"
 
         with HDF5Writer(str(h5_file)) as writer:
             writer.write(sample_grid_data)
@@ -138,7 +138,7 @@ class TestXDMFGenerator:
     def test_generate_temporal_collection(self, temp_dir, sample_grid_data):
         """Test generating temporal collection for time series."""
         h5_file = temp_dir / "test.h5"
-        xdmf_file = temp_dir / "test.xdmf2"
+        xdmf_file = temp_dir / "test.xdmf"
         time_steps = [0, 100, 200]
 
         # Write HDF5 with multiple time steps
@@ -160,7 +160,7 @@ class TestXDMFGenerator:
     def test_temporal_collection_structure(self, temp_dir, sample_grid_data):
         """Test temporal collection XML structure."""
         h5_file = temp_dir / "test.h5"
-        xdmf_file = temp_dir / "test.xdmf2"
+        xdmf_file = temp_dir / "test.xdmf"
         time_steps = [0, 100, 200]
 
         with HDF5Writer(str(h5_file)) as writer:
@@ -189,7 +189,7 @@ class TestXDMFGenerator:
     def test_time_values(self, temp_dir, sample_grid_data):
         """Test time values in temporal collection."""
         h5_file = temp_dir / "test.h5"
-        xdmf_file = temp_dir / "test.xdmf2"
+        xdmf_file = temp_dir / "test.xdmf"
         time_steps = [0, 100, 200]
         time_values = [0.0, 1.0, 2.0]
 
@@ -217,7 +217,7 @@ class TestXDMFGenerator:
     def test_hdf5_paths(self, temp_dir, sample_grid_data):
         """Test HDF5 file paths in DataItems."""
         h5_file = temp_dir / "test.h5"
-        xdmf_file = temp_dir / "test.xdmf2"
+        xdmf_file = temp_dir / "test.xdmf"
 
         with HDF5Writer(str(h5_file)) as writer:
             writer.write(sample_grid_data)
@@ -234,6 +234,36 @@ class TestXDMFGenerator:
         for item in data_items:
             assert h5_file.name in item.text
 
+    def test_hdf5_group_paths(self, temp_dir, sample_grid_data):
+        """Test HDF5 paths include the top-level time series group."""
+        h5_file = temp_dir / "test.h5"
+        xdmf_file = temp_dir / "test.xdmf"
+
+        with HDF5Writer(str(h5_file), group="timeseries") as writer:
+            writer.write(sample_grid_data, time_step=0)
+
+        XDMFGenerator.generate_temporal_collection(
+            str(h5_file),
+            str(xdmf_file),
+            time_steps=[0],
+            dimensions=sample_grid_data["dimensions"],
+            point_arrays=list(sample_grid_data["point_data"].keys()),
+            hdf5_group="timeseries",
+        )
+
+        tree = etree.parse(str(xdmf_file))
+
+        temperature_item = tree.find(".//Attribute[@Name='temperature']/DataItem")
+        assert temperature_item is not None
+        assert temperature_item.text == (
+            f"{h5_file.name}:/timeseries/step_0/point_data/temperature"
+        )
+
+        # Grid metadata stays at the HDF5 root
+        origin_item = tree.find(".//DataItem[@Name='Origin']")
+        assert origin_item is not None
+        assert origin_item.text == f"{h5_file.name}:/origin"
+
     def test_cell_attributes(self, temp_dir, sample_grid_data):
         """Test cell data attributes."""
         # Add cell data
@@ -242,10 +272,10 @@ class TestXDMFGenerator:
         }
 
         h5_file = temp_dir / "test.h5"
-        xdmf_file = temp_dir / "test.xdmf2"
+        xdmf_file = temp_dir / "test.xdmf"
 
         with HDF5Writer(str(h5_file)) as writer:
-            writer.write(sample_grid_data)
+            writer.write(sample_grid_data, time_step=0)
 
         XDMFGenerator.generate_temporal_collection(
             str(h5_file),
@@ -260,7 +290,8 @@ class TestXDMFGenerator:
 
         # Find cell attribute
         cell_attrs = [
-            attr for attr in tree.findall(".//Attribute")
+            attr
+            for attr in tree.findall(".//Attribute")
             if attr.get("Center") == "Cell"
         ]
 
@@ -270,7 +301,7 @@ class TestXDMFGenerator:
     def test_generate_with_timestep_instance(self, temp_dir, sample_grid_data):
         """Test generate method with time steps."""
         h5_file = temp_dir / "test.h5"
-        xdmf_file = temp_dir / "test.xdmf2"
+        xdmf_file = temp_dir / "test.xdmf"
         time_steps = [0, 100]
 
         with HDF5Writer(str(h5_file)) as writer:
@@ -288,7 +319,7 @@ class TestXDMFGenerator:
     def test_xml_validity(self, temp_dir, sample_grid_data):
         """Test that generated XML is valid and parseable."""
         h5_file = temp_dir / "test.h5"
-        xdmf_file = temp_dir / "test.xdmf2"
+        xdmf_file = temp_dir / "test.xdmf"
 
         with HDF5Writer(str(h5_file)) as writer:
             writer.write(sample_grid_data)
@@ -302,4 +333,4 @@ class TestXDMFGenerator:
 
         # Check XML declaration
         content = xdmf_file.read_text()
-        assert '<?xml version=' in content
+        assert "<?xml version=" in content

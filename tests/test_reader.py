@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from vts2h5.reader import VTSReader
+from vtk2h5.reader import VTSReader
 
 
 class TestVTSReader:

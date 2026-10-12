@@ -5,8 +5,8 @@ from pathlib import Path
 import pytest
 from lxml import etree
 
-from vts2h5.writer import HDF5Writer
-from vts2h5.xdmf import XDMFGenerator
+from vtk2h5.writer import HDF5Writer
+from vtk2h5.xdmf import XDMFGenerator
 
 
 class TestXDMFGenerator:

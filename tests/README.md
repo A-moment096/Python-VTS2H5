@@ -1,6 +1,6 @@
-# Tests for VTS2H5
+# Tests for VTK2H5
 
-This directory contains comprehensive tests for the vts2h5 package.
+This directory contains comprehensive tests for the vtk2h5 package.
 
 ## Test Structure
 
@@ -16,7 +16,7 @@ This directory contains comprehensive tests for the vts2h5 package.
 The XDMF3 regression tests validate geometry ordering, dataset metadata, precision conversion, and invalid inputs. Optional round-trip tests open generated files with ParaView in separate processes and compare their coordinates and point/cell arrays with the source VTS data. To enable them on Windows:
 
 ```powershell
-$env:VTS2H5_PVPYTHON = 'C:\Program Files\ParaView 6.1.0\bin\pvpython.exe'
+$env:VTK2H5_PVPYTHON = 'C:\Program Files\ParaView 6.1.0\bin\pvpython.exe'
 pytest tests/test_paraview_roundtrip.py
 ```
 
@@ -29,7 +29,7 @@ pytest
 
 ### Run with coverage report
 ```bash
-pytest --cov=vts2h5 --cov-report=html
+pytest --cov=vtk2h5 --cov-report=html
 ```
 
 ### Run specific test file
@@ -67,7 +67,7 @@ pytest -s
 After running tests with coverage, you can view the HTML report:
 ```bash
 # Generate coverage report
-pytest --cov=vts2h5 --cov-report=html
+pytest --cov=vtk2h5 --cov-report=html
 
 # Open the report (the exact command depends on your OS)
 # Linux/Mac:
@@ -98,3 +98,18 @@ Tests are automatically run on every push and pull request through GitHub Action
 - **Build job**: Builds the package distribution
 
 See `.github/workflows/ci.yml` for the complete CI configuration.
+
+
+## v1.2.0 generated data
+
+From a source checkout, run `python scripts/generate_test_data.py data/examples`.
+The generator refuses to overwrite files and creates two deterministic frames
+per geometry family, plus legacy and comprehensive mixed-cell examples. Fields
+include float scalars/vectors/tensors, integer point IDs, and cell fields.
+The automated suite generates fixtures in pytest temporary directories; the
+ignored local `data` folder is not required by CI.
+
+For actual ParaView tests on Windows, set
+`$env:VTK2H5_PVPYTHON="C:/Program Files/ParaView 6.2.0/bin/pvpython.exe"`
+and run `python -m pytest tests/test_paraview_roundtrip.py tests/test_vtk_paraview.py`.
+Tests compare every coordinate and field tuple and normalized cell connectivity.

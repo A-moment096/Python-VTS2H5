@@ -5,9 +5,9 @@ import h5py
 import pytest
 from lxml import etree
 
-from vts2h5.cli import main, parse_args
-from vts2h5.writer import HDF5Writer
-from vts2h5.xdmf import XDMFGenerator
+from vtk2h5.cli import main, parse_args
+from vtk2h5.writer import HDF5Writer
+from vtk2h5.xdmf import XDMFGenerator
 
 
 @pytest.mark.parametrize("mode", ["cwd", "inside", "beside", "output"])
@@ -30,7 +30,7 @@ def test_multiple_folders_and_output_locations(
     monkeypatch.setattr(
         sys,
         "argv",
-        ["vts2h5", *map(str, folders), *options, "-f", "TEMP", "-j", "1", "-s"],
+        ["vtk2h5", *map(str, folders), *options, "-f", "TEMP", "-j", "1", "-s"],
     )
     main()
     for folder in folders:
@@ -55,7 +55,7 @@ def test_collisions_rejected_before_writing(tmp_path, monkeypatch):
         folder.mkdir(parents=True)
         (folder / "step_0.vts").touch()
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(sys, "argv", ["vts2h5", *map(str, folders), "-s"])
+    monkeypatch.setattr(sys, "argv", ["vtk2h5", *map(str, folders), "-s"])
     with pytest.raises(SystemExit):
         main()
     assert not list(tmp_path.glob("*.h5"))
@@ -65,7 +65,7 @@ def test_collisions_rejected_before_writing(tmp_path, monkeypatch):
     "flags", [["-i", "-n"], ["-n", "-o", "results"], ["-i", "-o", "results"]]
 )
 def test_conflicting_locations_rejected(monkeypatch, flags):
-    monkeypatch.setattr(sys, "argv", ["vts2h5", "data", *flags])
+    monkeypatch.setattr(sys, "argv", ["vtk2h5", "data", *flags])
     with pytest.raises(SystemExit):
         parse_args()
 
@@ -117,7 +117,7 @@ def test_unmatched_cli_preference_preserves_existing_outputs(
         sys,
         "argv",
         [
-            "vts2h5",
+            "vtk2h5",
             str(sample_vts_file.parent),
             "-o",
             str(tmp_path),

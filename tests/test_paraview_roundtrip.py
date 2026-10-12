@@ -10,13 +10,13 @@ import pytest
 import vtk
 from vtkmodules.util.numpy_support import numpy_to_vtk
 
-from vts2h5.converter import convert_vts_to_hdf5
-from vts2h5.reader import VTSReader
-from vts2h5.xdmf import XDMFGenerator
+from vtk2h5.converter import convert_vts_to_hdf5
+from vtk2h5.reader import VTSReader
+from vtk2h5.xdmf import XDMFGenerator
 
-PVPYTHON = os.environ.get("VTS2H5_PVPYTHON")
+PVPYTHON = os.environ.get("VTK2H5_PVPYTHON")
 pytestmark = pytest.mark.skipif(
-    not PVPYTHON, reason="Set VTS2H5_PVPYTHON to test an installed ParaView"
+    not PVPYTHON, reason="Set VTK2H5_PVPYTHON to test an installed ParaView"
 )
 
 

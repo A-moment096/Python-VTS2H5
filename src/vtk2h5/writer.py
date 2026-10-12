@@ -1,11 +1,13 @@
-"""HDF5 storage for fixed, axis-aligned uniform grids and XDMF3 fields."""
+"""HDF5 storage for fixed VTK meshes and XDMF3 fields."""
 
 import json
 from pathlib import Path
-from typing import Any, Optional, cast
+from typing import Any, Optional
 
 import h5py
 import numpy as np
+
+from vtk2h5.mesh import prepare_geometry
 
 TIMESERIES_GROUP = "timeseries"
 FLOAT_DTYPES = ("preserve", "float32", "float64")
@@ -66,7 +68,6 @@ class HDF5Writer:
             raise ValueError(
                 f"Unsupported floating-point storage {float_dtype!r}; "
                 "use preserve, float32, or float64. "
-                "float16 is not supported by ParaView's XDMF3 reader."
             )
         if compression not in (None, "gzip", "lzf"):
             raise ValueError(f"Unsupported compression: {compression}")
@@ -89,9 +90,19 @@ class HDF5Writer:
         fields = {}
         for center in ("point_data", "cell_data"):
             shape = (
-                tuple(reversed(dims))
-                if center == "point_data"
-                else tuple(max(1, d - 1) for d in reversed(dims))
+                (
+                    (
+                        grid_data["num_points"]
+                        if center == "point_data"
+                        else grid_data["num_cells"]
+                    ),
+                )
+                if dims is None
+                else (
+                    tuple(reversed(dims))
+                    if center == "point_data"
+                    else tuple(max(1, d - 1) for d in reversed(dims))
+                )
             )
             count = int(np.prod(shape))
             for name, values in grid_data[center].items():
@@ -139,7 +150,12 @@ class HDF5Writer:
     def write(self, grid_data: dict[str, Any], time_step: Optional[int] = None) -> None:
         """Validate a frame before adding it; frames share geometry and schema."""
         try:
-            dims, origin, spacing = uniform_geometry(grid_data)
+            family, geometry = prepare_geometry(grid_data)
+            dims = (
+                tuple(map(int, grid_data["dimensions"]))
+                if family != "unstructured"
+                else None
+            )
             fields = self._prepare_fields(grid_data, dims)
             schema = json.dumps(
                 {
@@ -150,18 +166,24 @@ class HDF5Writer:
             )
             if self.file is None:
                 self.file = h5py.File(self.filepath, self.mode)
-            if "origin" in self.file:
+            if "field_schema" in self.file.attrs:
                 if self.file.attrs.get("coordinate_order") != "ZYX":
                     raise ValueError(
                         "Cannot append to an older XYZ-layout HDF5 file; reconvert it"
                     )
+                stored_family = self.file.attrs.get("geometry_type", "uniform")
+                stored_dims = (
+                    tuple(self.file.attrs["dimensions"])
+                    if "dimensions" in self.file.attrs
+                    else None
+                )
                 if (
-                    tuple(np.asarray(self.file.attrs["dimensions"])) != dims
-                    or not np.array_equal(
-                        cast(h5py.Dataset, self.file["origin"])[:], origin[::-1]
-                    )
-                    or not np.array_equal(
-                        cast(h5py.Dataset, self.file["spacing"])[:], spacing[::-1]
+                    stored_family != family
+                    or stored_dims != dims
+                    or any(
+                        name not in self.file
+                        or not np.array_equal(self.file[name][:], values)
+                        for name, values in geometry.items()
                     )
                 ):
                     raise ValueError("Grid geometry changes between time steps")
@@ -170,14 +192,26 @@ class HDF5Writer:
                         "Field names, shapes or storage types change between time steps"
                     )
             else:
+                if len(self.file) or len(self.file.attrs):
+                    raise ValueError(
+                        "Cannot append to an unrecognized HDF5 geometry layout"
+                    )
                 self.file.attrs["coordinate_order"] = "ZYX"
-                self.file.attrs["dimensions"] = dims
+                self.file.attrs["layout_version"] = 2
+                self.file.attrs["geometry_type"] = family
+                if dims is not None:
+                    self.file.attrs["dimensions"] = dims
+                self.file.attrs["num_points"] = len(grid_data["points"])
+                self.file.attrs["num_cells"] = (
+                    grid_data.get(
+                        "num_cells", int(np.prod([max(1, d - 1) for d in dims]))
+                    )
+                    if dims is not None
+                    else grid_data["num_cells"]
+                )
                 self.file.attrs["field_schema"] = schema
                 self.file.attrs["float_dtype"] = self.float_dtype
-                for name, data in (
-                    ("origin", origin[::-1]),
-                    ("spacing", spacing[::-1]),
-                ):
+                for name, data in geometry.items():
                     self.file.create_dataset(
                         name,
                         data=data,
@@ -186,8 +220,12 @@ class HDF5Writer:
                     )
             base = f"{self.group}/" if self.group else ""
             prefix = f"{base}step_{time_step}/" if time_step is not None else base
-            if any(prefix + name in self.file for name in fields):
+            if (time_step is not None and prefix.rstrip("/") in self.file) or any(
+                prefix + name in self.file for name in fields
+            ):
                 raise ValueError(f"Frame already exists: {time_step}")
+            if time_step is not None:
+                self.file.create_group(prefix.rstrip("/"))
             for name, array in fields.items():
                 self.file.create_dataset(
                     prefix + name,

@@ -6,7 +6,7 @@ import h5py
 import numpy as np
 import pytest
 
-from vts2h5.writer import HDF5Writer
+from vtk2h5.writer import HDF5Writer
 
 
 class TestHDF5Writer:

@@ -32,7 +32,7 @@ jobs:
 
     - name: Run tests
       run: |
-        uv run pytest tests/ --cov=vts2h5 --cov-report=xml --cov-report=term
+        uv run pytest tests/ --cov=vtk2h5 --cov-report=xml --cov-report=term
 
     - name: Upload coverage
       uses: codecov/codecov-action@v4

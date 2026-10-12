@@ -1,54 +1,55 @@
-"""Command-line interface for vts2h5."""
+"""Command-line interface for vtk2h5."""
 
 import argparse
 import re
 import sys
 from pathlib import Path
 
-from vts2h5 import __version__
+from vtk2h5 import __version__
+from vtk2h5.reader import SUPPORTED_FORMATS
 
 
 def parse_args():
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Convert VTS files from one or more folders to HDF5 with XDMF3 descriptors",
+        description="Convert VTK datasets from one or more folders to HDF5 with XDMF3 descriptors",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   # Convert multiple folders, output beside each, prioritize concentration fields
-  vts2h5 data/trial1 data/trial2 -n -f con
+  vtk2h5 data/trial1 data/trial2 -n -f con
 
   # Convert folder `data`, output data.h5 and data.xdmf in current directory
-  vts2h5 data
+  vtk2h5 data
 
   # Output in the same folder as input
-  vts2h5 data -i
+  vtk2h5 data -i
 
   # Output to a specific folder
-  vts2h5 data -o results/
+  vtk2h5 data -o results/
 
   # Use 4 parallel workers for faster conversion
-  vts2h5 data -j 4
+  vtk2h5 data -j 4
 
   # Use all available CPU cores
-  vts2h5 data -j 0
+  vtk2h5 data -j 0
 
   # Silent mode (no progress bar, minimal output)
-  vts2h5 data -s
+  vtk2h5 data -s
 
   # Verbose mode (show grid info and detailed stats)
-  vts2h5 data -v
+  vtk2h5 data -v
 
   # Custom output name with parallel processing
-  vts2h5 data --output-name simulation -j 4
+  vtk2h5 data --output-name simulation -j 4
 
   # Show folder info without conversion
-  vts2h5 data --info
+  vtk2h5 data --info
         """,
     )
 
     parser.add_argument(
-        "input_folders", nargs="+", help="Input folders containing VTS files"
+        "input_folders", nargs="+", help="Input folders containing VTK datasets"
     )
     location = parser.add_mutually_exclusive_group()
 
@@ -116,7 +117,7 @@ Examples:
         type=int,
         default=0,
         metavar="N",
-        help="Number of parallel jobs for reading VTS files (default: 0 for auto, use 1 for sequential)",
+        help="Number of parallel jobs for reading VTK files (default: 0 for auto, use 1 for sequential)",
     )
 
     parser.add_argument(
@@ -135,7 +136,16 @@ Examples:
         choices=["preserve", "float32", "float64"],
         default="preserve",
         help="Floating-point field storage (default: preserve). Geometry stays float64; "
-        "integers retain their type. float16 is unsupported by the XDMF3 reader.",
+        "integers retain their type.",
+    )
+    parser.add_argument(
+        "--format",
+        dest="formats",
+        action="append",
+        type=lambda value: value.lower().lstrip("."),
+        choices=SUPPORTED_FORMATS,
+        metavar="EXT",
+        help="Select an input extension; repeat to include several (default: all supported formats)",
     )
     args = parser.parse_args()
     if args.output_name and len(args.input_folders) != 1:
@@ -164,52 +174,50 @@ def default_output_name(input_folder: Path) -> str:
     return name or "output"
 
 
-def find_vts_files(folder: Path) -> list[Path]:
-    """
-    Find all VTS files in a folder.
-
-    Args:
-        folder: Folder path to search
-
-    Returns:
-        Sorted list of Path objects
-    """
-    if not folder.exists():
-        print(f"Error: Folder not found: {folder}", file=sys.stderr)
-        sys.exit(1)
-
+def find_vtk_files(folder: Path, formats=None) -> list[Path]:
+    """Discover selected serial formats deterministically and without recursion."""
     if not folder.is_dir():
-        print(f"Error: Not a folder: {folder}", file=sys.stderr)
-        sys.exit(1)
-
-    files = list(folder.glob("*.vts"))
-
+        print(f"Error: Folder not found or not a folder: {folder}", file=sys.stderr)
+        raise SystemExit(1)
+    selected = {value.lower().lstrip(".") for value in (formats or SUPPORTED_FORMATS)}
+    if not selected.issubset(SUPPORTED_FORMATS):
+        raise ValueError(f"Unsupported formats: {selected - set(SUPPORTED_FORMATS)}")
+    files = [
+        path
+        for path in folder.iterdir()
+        if path.is_file() and path.suffix.lower().lstrip(".") in selected
+    ]
     if not files:
-        print(f"Error: No VTS files found in {folder}", file=sys.stderr)
-        sys.exit(1)
+        print(f"Error: No supported VTK files found in {folder}", file=sys.stderr)
+        raise SystemExit(1)
 
-    # Sort files numerically by step number
-    def get_step_number(filepath: Path) -> int:
-        match = re.search(r"step[_\s]*(\d+)", filepath.stem)
-        return int(match.group(1)) if match else 0
+    def order(path):
+        match = re.search(r"step[_\s]*(\d+)", path.stem)
+        return (int(match.group(1)) if match else 0, path.name.casefold(), path.name)
 
-    files.sort(key=get_step_number)
-    return files
+    return sorted(files, key=order)
 
 
-def display_folder_info(folder: Path) -> None:
-    """Display information about VTS files in a folder as a time series."""
-    from vts2h5.converter import extract_time_steps
-    from vts2h5.reader import VTSReader
+def find_vts_files(folder: Path) -> list[Path]:
+    """Compatibility discovery function restricted to VTS."""
+    return find_vtk_files(folder, ["vts"])
 
-    files = find_vts_files(folder)
+
+def display_folder_info(folder: Path, formats=None) -> None:
+    """Display information about VTK files in a folder as a time series."""
+    from vtk2h5.converter import extract_time_steps
+    from vtk2h5.reader import VTKReader
+
+    files = find_vtk_files(folder, formats)
 
     print(f"\nFolder: {folder}")
-    print(f"VTS files: {len(files)}")
+    print(
+        f"{'VTS' if all(p.suffix.lower() == '.vts' for p in files) else 'VTK'} files: {len(files)}"
+    )
 
     # Read first file to get grid information
     try:
-        reader = VTSReader(str(files[0]))
+        reader = VTKReader(str(files[0]))
         info = reader.get_info()
 
         # Extract time steps from filenames
@@ -225,7 +233,9 @@ def display_folder_info(folder: Path) -> None:
         print(f"  Total size:    {total_size:,} bytes ({total_size/1024/1024:.2f} MB)")
 
         print("\nGrid Information:")
-        print(f"  Dimensions:    {info['dimensions']}")
+        print(f"  Dataset type:  {info['dataset_type']}")
+        if "dimensions" in info:
+            print(f"  Dimensions:    {info['dimensions']}")
         print(f"  Points:        {info['num_points']:,}")
         print(f"  Cells:         {info['num_cells']:,}")
 
@@ -252,11 +262,11 @@ def convert_folder(
     float_dtype: str = "preserve",
     first_fields=None,
 ) -> None:
-    """Convert all VTS files in a folder to HDF5 as a time series."""
-    from vts2h5.converter import convert_vts_to_hdf5
+    """Convert all VTK files in a folder to HDF5 as a time series."""
+    from vtk2h5.converter import convert_vtk_to_hdf5
 
     # Call the converter
-    stats = convert_vts_to_hdf5(
+    stats = convert_vtk_to_hdf5(
         input_files=input_files,
         output_file=output_file,
         xdmf_output=xdmf_output,
@@ -282,7 +292,9 @@ def convert_folder(
         if stats["grid_info"]:
             grid_info = stats["grid_info"]
             print("\nGrid Information:")
-            print(f"  Dimensions:    {grid_info['dimensions']}")
+            print(f"  Dataset type:  {grid_info['dataset_type']}")
+            if "dimensions" in grid_info:
+                print(f"  Dimensions:    {grid_info['dimensions']}")
             print(f"  Points:        {grid_info['num_points']:,}")
             print(f"  Cells:         {grid_info['num_cells']:,}")
             if grid_info["point_arrays"]:
@@ -306,7 +318,7 @@ def main():
     plans = []
     destinations = set()
     for folder in folders:
-        input_files = find_vts_files(folder)
+        input_files = find_vtk_files(folder, args.formats)
         if args.info:
             plans.append((folder, input_files, None, None))
             continue
@@ -333,11 +345,11 @@ def main():
 
     for folder, input_files, output_h5, output_xdmf in plans:
         if args.info:
-            display_folder_info(folder)
+            display_folder_info(folder, args.formats)
             continue
         output_h5.parent.mkdir(parents=True, exist_ok=True)
         if not args.silent:
-            print(f"Converting {len(input_files)} VTS files from {folder}")
+            print(f"Converting {len(input_files)} VTK files from {folder}")
             if args.verbose:
                 print(f"H5:     {output_h5}")
                 print(f"XDMF:   {output_xdmf}")

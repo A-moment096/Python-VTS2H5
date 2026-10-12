@@ -8,9 +8,9 @@ import numpy as np
 import pytest
 from lxml import etree
 
-from vts2h5.cli import main, parse_args
-from vts2h5.writer import HDF5Writer, uniform_geometry
-from vts2h5.xdmf import XDMFGenerator
+from vtk2h5.cli import main, parse_args
+from vtk2h5.writer import HDF5Writer, uniform_geometry
+from vtk2h5.xdmf import XDMFGenerator
 
 
 def uniform_grid(dims=(4, 3, 1)):
@@ -128,7 +128,7 @@ def test_float16_is_rejected_before_creating_output(tmp_path):
 
 
 def test_cli_precision_option(monkeypatch):
-    monkeypatch.setattr(sys, "argv", ["vts2h5", "data", "--float-dtype", "float32"])
+    monkeypatch.setattr(sys, "argv", ["vtk2h5", "data", "--float-dtype", "float32"])
     assert parse_args().float_dtype == "float32"
 
 
@@ -137,7 +137,7 @@ def test_cli_writes_selected_precision_and_lzf(sample_vts_file, tmp_path, monkey
         sys,
         "argv",
         [
-            "vts2h5",
+            "vtk2h5",
             str(sample_vts_file.parent),
             "-o",
             str(tmp_path),

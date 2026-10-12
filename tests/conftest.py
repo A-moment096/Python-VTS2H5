@@ -1,4 +1,4 @@
-"""Pytest fixtures for vts2h5 tests."""
+"""Pytest fixtures for vtk2h5 tests."""
 
 import tempfile
 from pathlib import Path

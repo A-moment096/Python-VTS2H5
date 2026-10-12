@@ -1,1 +1,1 @@
-"""Tests for vts2h5 package."""
+"""Tests for vtk2h5 package."""

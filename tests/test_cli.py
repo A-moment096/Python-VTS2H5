@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from vts2h5.cli import (
+from vtk2h5.cli import (
     default_output_name,
     display_folder_info,
     find_vts_files,
@@ -18,7 +18,7 @@ class TestParseArgs:
 
     def test_basic_input(self, monkeypatch):
         """Test parsing basic input folder."""
-        monkeypatch.setattr(sys, "argv", ["vts2h5", "data/test1"])
+        monkeypatch.setattr(sys, "argv", ["vtk2h5", "data/test1"])
         args = parse_args()
 
         assert args.input_folder == "data/test1"
@@ -29,28 +29,28 @@ class TestParseArgs:
 
     def test_input_folder_flag(self, monkeypatch):
         """Test -i flag for output in input folder."""
-        monkeypatch.setattr(sys, "argv", ["vts2h5", "data/test1", "-i"])
+        monkeypatch.setattr(sys, "argv", ["vtk2h5", "data/test1", "-i"])
         args = parse_args()
 
         assert args.use_input_folder is True
 
     def test_output_folder(self, monkeypatch):
         """Test -o flag for custom output folder."""
-        monkeypatch.setattr(sys, "argv", ["vts2h5", "data/test1", "-o", "results/"])
+        monkeypatch.setattr(sys, "argv", ["vtk2h5", "data/test1", "-o", "results/"])
         args = parse_args()
 
         assert args.output_folder == "results/"
 
     def test_silent_flag(self, monkeypatch):
         """Test -s flag for silent mode."""
-        monkeypatch.setattr(sys, "argv", ["vts2h5", "data/test1", "-s"])
+        monkeypatch.setattr(sys, "argv", ["vtk2h5", "data/test1", "-s"])
         args = parse_args()
 
         assert args.silent is True
 
     def test_verbose_flag(self, monkeypatch):
         """Test -v flag for verbose mode."""
-        monkeypatch.setattr(sys, "argv", ["vts2h5", "data/test1", "-v"])
+        monkeypatch.setattr(sys, "argv", ["vtk2h5", "data/test1", "-v"])
         args = parse_args()
 
         assert args.verbose is True
@@ -58,7 +58,7 @@ class TestParseArgs:
     def test_output_name(self, monkeypatch):
         """Test --output-name flag."""
         monkeypatch.setattr(
-            sys, "argv", ["vts2h5", "data/test1", "--output-name", "simulation"]
+            sys, "argv", ["vtk2h5", "data/test1", "--output-name", "simulation"]
         )
         args = parse_args()
 
@@ -67,7 +67,7 @@ class TestParseArgs:
     def test_compression_flag(self, monkeypatch):
         """Test --compression flag."""
         monkeypatch.setattr(
-            sys, "argv", ["vts2h5", "data/test1", "--compression", "lzf"]
+            sys, "argv", ["vtk2h5", "data/test1", "--compression", "lzf"]
         )
         args = parse_args()
 
@@ -76,7 +76,7 @@ class TestParseArgs:
     def test_compression_level(self, monkeypatch):
         """Test --compression-level flag."""
         monkeypatch.setattr(
-            sys, "argv", ["vts2h5", "data/test1", "--compression-level", "9"]
+            sys, "argv", ["vtk2h5", "data/test1", "--compression-level", "9"]
         )
         args = parse_args()
 
@@ -84,21 +84,21 @@ class TestParseArgs:
 
     def test_jobs_flag(self, monkeypatch):
         """Test -j flag for parallel jobs."""
-        monkeypatch.setattr(sys, "argv", ["vts2h5", "data/test1", "-j", "4"])
+        monkeypatch.setattr(sys, "argv", ["vtk2h5", "data/test1", "-j", "4"])
         args = parse_args()
 
         assert args.jobs == 4
 
     def test_info_flag(self, monkeypatch):
         """Test --info flag."""
-        monkeypatch.setattr(sys, "argv", ["vts2h5", "data/test1", "--info"])
+        monkeypatch.setattr(sys, "argv", ["vtk2h5", "data/test1", "--info"])
         args = parse_args()
 
         assert args.info is True
 
     def test_default_compression(self, monkeypatch):
         """Test default compression settings."""
-        monkeypatch.setattr(sys, "argv", ["vts2h5", "data/test1"])
+        monkeypatch.setattr(sys, "argv", ["vtk2h5", "data/test1"])
         args = parse_args()
 
         assert args.compression == "gzip"
@@ -106,7 +106,7 @@ class TestParseArgs:
 
     def test_default_jobs(self, monkeypatch):
         """Test default jobs setting."""
-        monkeypatch.setattr(sys, "argv", ["vts2h5", "data/test1"])
+        monkeypatch.setattr(sys, "argv", ["vtk2h5", "data/test1"])
         args = parse_args()
 
         assert args.jobs == 0  # Auto-detect
@@ -251,7 +251,7 @@ class TestCLIIntegration:
 
     def test_full_conversion_workflow(self, temp_dir, sample_vts_files):
         """Test complete conversion workflow."""
-        from vts2h5.cli import convert_folder
+        from vtk2h5.cli import convert_folder
 
         output_h5 = temp_dir / "output.h5"
         output_xdmf = temp_dir / "output.xdmf"
@@ -273,7 +273,7 @@ class TestCLIIntegration:
 
     def test_conversion_with_verbose(self, temp_dir, sample_vts_files, capsys):
         """Test conversion with verbose output."""
-        from vts2h5.cli import convert_folder
+        from vtk2h5.cli import convert_folder
 
         output_h5 = temp_dir / "output.h5"
         output_xdmf = temp_dir / "output.xdmf"
@@ -295,7 +295,7 @@ class TestCLIIntegration:
 
     def test_conversion_silent_mode(self, temp_dir, sample_vts_files, capsys):
         """Test conversion in silent mode."""
-        from vts2h5.cli import convert_folder
+        from vtk2h5.cli import convert_folder
 
         output_h5 = temp_dir / "output.h5"
         output_xdmf = temp_dir / "output.xdmf"

@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.2.0] - 2026-10-12
+
+### Changed
+- Rename the project, Python package, CLI command, and distribution artifacts from `vts2h5` to `vtk2h5`. Update imports and commands when upgrading.
+
+### Added
+- Native readers for legacy `.vtk`, `.vti`, `.vtr`, `.vtu`, and `.vtp`, alongside `.vts`.
+- Nonuniform rectilinear, curved structured, rotated image, unstructured, and PolyData geometry in HDF5/XDMF3.
+- XDMF Mixed topology for common linear cells; pixel/voxel reordering and triangle-strip/Polyvertex expansion with repeated cell fields.
+- Generic `VTKReader` and `convert_vtk_to_hdf5` APIs; repeatable CLI `--format` selection and dataset-aware `--info`.
+- Reproducible fixture generator and ParaView tests comparing coordinates, connectivity, fields, precision, and time values.
+
+### Fixed
+- Read raw-appended XML without mandatory general-purpose XML parsing.
+- Read all legacy numeric arrays instead of only the first array in each category.
+- Preserve existing output pairs on read, validation, write, descriptor, or publication failure, with rollback backups.
+- Validate fixed geometry/connectivity and schema in both sequential and parallel conversion; cap workers by input count.
+- Keep geometry-only frame groups and reject duplicate/nonincreasing steps before output creation.
+
+### Compatibility
+- Retain the command name, existing VTS Python entry points, and compact uniform-grid geometry/ZYX field layout.
+- Higher-order/polyhedron cells, changing meshes, parallel manifests, multiblock, and collection manifests remain unsupported.
+- Compression and reading-performance benefits depend on data and reader settings.
+
 ## [1.1.0] - 2026-10-11
 
 ### Added
@@ -44,7 +68,7 @@
 ## [0.1.0] - 2025-12-04
 
 ### Added
-- Initial release of vts2h5 converter
+- Initial release of vtk2h5 converter
 - Convert VTS files from folders to HDF5 with XDMF2 descriptors
 - Support for time series with automatic step number extraction
 - Three output modes: silent (`-s`), normal (default), and verbose (`-v`)

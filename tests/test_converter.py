@@ -6,7 +6,7 @@ from pathlib import Path
 import h5py
 import pytest
 
-from vts2h5.converter import (
+from vtk2h5.converter import (
     convert_vts_to_hdf5,
     extract_time_steps,
     read_vts_file_worker,

@@ -11,7 +11,7 @@ from lxml import etree
 
 
 class XDMFGenerator:
-    """Describe uniform-grid HDF5 output in ParaView XDMF3 ordering."""
+    """Describe stored mesh geometry and fields in ParaView XDMF3 ordering."""
 
     def __init__(
         self,
@@ -19,8 +19,10 @@ class XDMFGenerator:
         grid_data: Optional[dict[str, Any]] = None,
         hdf5_group: str = "",
         first_fields: Optional[list[str]] = None,
+        hdf5_reference: Optional[str] = None,
     ):
         self.hdf5_filepath = Path(hdf5_filepath)
+        self.hdf5_reference = Path(hdf5_reference or hdf5_filepath)
         self.grid_data = grid_data
         self.hdf5_group = hdf5_group.strip("/")
         self.first_fields = first_fields or []
@@ -36,7 +38,7 @@ class XDMFGenerator:
             output_filepath,
             time_steps,
             time_values,
-            self.grid_data["dimensions"] if self.grid_data else None,
+            self.grid_data.get("dimensions") if self.grid_data else None,
             list(self.grid_data["point_data"]) if self.grid_data else None,
             list(self.grid_data["cell_data"]) if self.grid_data else None,
         )
@@ -109,10 +111,10 @@ class XDMFGenerator:
         # References are relative to the descriptor, not the current directory.
         try:
             relative_h5 = os.path.relpath(
-                self.hdf5_filepath.resolve(), output.parent.resolve()
+                self.hdf5_reference.resolve(), output.parent.resolve()
             )
         except ValueError:  # Different Windows drives require an absolute path.
-            relative_h5 = str(self.hdf5_filepath.resolve())
+            relative_h5 = str(self.hdf5_reference.resolve())
         reference = Path(relative_h5).as_posix()
         root = etree.Element("Xdmf", Version="3.0")
         domain = etree.SubElement(root, "Domain")
@@ -130,9 +132,14 @@ class XDMFGenerator:
         with h5py.File(self.hdf5_filepath, "r") as h5:
             if h5.attrs.get("coordinate_order") != "ZYX":
                 raise ValueError(
-                    "HDF5 geometry is not marked ZYX; reconvert the source VTS files"
+                    "HDF5 geometry is not marked ZYX; reconvert the source VTK files"
                 )
-            dims = tuple(map(int, np.asarray(h5.attrs["dimensions"])))
+            family = h5.attrs.get("geometry_type", "uniform")
+            dims = (
+                tuple(map(int, np.asarray(h5.attrs["dimensions"])))
+                if family != "unstructured"
+                else None
+            )
             if dimensions is not None and tuple(dimensions) != dims:
                 raise ValueError("Descriptor dimensions disagree with HDF5 geometry")
             for step, time in zip([None] if time_steps is None else time_steps, values):
@@ -144,20 +151,7 @@ class XDMFGenerator:
                 )
                 if time is not None:
                     etree.SubElement(grid, "Time", Value=format(float(time), ".17g"))
-                etree.SubElement(
-                    grid,
-                    "Topology",
-                    TopologyType="3DCoRectMesh",
-                    Dimensions=" ".join(map(str, reversed(dims))),
-                )
-                geometry = etree.SubElement(
-                    grid, "Geometry", GeometryType="ORIGIN_DXDYDZ"
-                )
-                for label in ("Origin", "Spacing"):
-                    dataset = h5[label.lower()]
-                    self._data_item(
-                        geometry, dataset, f"{reference}:/{label.lower()}", label
-                    )
+                self._geometry(grid, h5, reference, family, dims)
                 prefix = self._step_prefix(step)
                 for center, group_name, selected in (
                     ("Node", "point_data", point_arrays),
@@ -170,20 +164,33 @@ class XDMFGenerator:
                         else (selected or [])
                     )
                     expected_shape = (
-                        tuple(reversed(dims))
-                        if center == "Node"
-                        else tuple(max(1, d - 1) for d in reversed(dims))
+                        (
+                            int(
+                                h5.attrs["num_points"]
+                                if center == "Node"
+                                else h5.attrs["num_cells"]
+                            ),
+                        )
+                        if family == "unstructured"
+                        else (
+                            tuple(reversed(dims))
+                            if center == "Node"
+                            else tuple(max(1, d - 1) for d in reversed(dims))
+                        )
                     )
+                    rank = len(expected_shape)
                     for name in names:
                         dataset = cast(h5py.Dataset, h5[f"{group_path}/{name}"])
                         if (
-                            dataset.ndim not in (3, 4)
-                            or dataset.shape[:3] != expected_shape
+                            dataset.ndim not in (rank, rank + 1)
+                            or dataset.shape[:rank] != expected_shape
                         ):
                             raise ValueError(
                                 f"Invalid field shape: {dataset.name}: {dataset.shape}"
                             )
-                        components = dataset.shape[-1] if dataset.ndim == 4 else 1
+                        components = (
+                            dataset.shape[-1] if dataset.ndim == rank + 1 else 1
+                        )
                         attribute_type = {
                             1: "Scalar",
                             3: "Vector",
@@ -230,6 +237,44 @@ class XDMFGenerator:
             str(output), pretty_print=True, xml_declaration=True, encoding="utf-8"
         )
 
+    def _geometry(self, grid, h5, reference, family, dims):
+        types = {
+            "uniform": "3DCoRectMesh",
+            "rectilinear": "3DRectMesh",
+            "structured": "3DSMesh",
+            "unstructured": "Mixed",
+        }
+        if family not in types:
+            raise ValueError(f"Unsupported stored geometry type {family!r}")
+        props = {"TopologyType": types[family]}
+        if family == "unstructured":
+            props["NumberOfElements"] = str(h5.attrs["num_cells"])
+        else:
+            props["Dimensions"] = " ".join(map(str, reversed(dims)))
+        topology = etree.SubElement(grid, "Topology", **props)
+        if family == "unstructured":
+            self._data_item(topology, h5["topology"], f"{reference}:/topology")
+        geometry = etree.SubElement(
+            grid,
+            "Geometry",
+            GeometryType={
+                "uniform": "ORIGIN_DXDYDZ",
+                "rectilinear": "VXVYVZ",
+                "structured": "XYZ",
+                "unstructured": "XYZ",
+            }[family],
+        )
+        names = {
+            "uniform": ("origin", "spacing"),
+            "rectilinear": ("x", "y", "z"),
+            "structured": ("points",),
+            "unstructured": ("points",),
+        }[family]
+        for name in names:
+            self._data_item(
+                geometry, h5[name], f"{reference}:/{name}", name.capitalize()
+            )
+
     @staticmethod
     def generate_temporal_collection(
         hdf5_filepath: str,
@@ -241,10 +286,14 @@ class XDMFGenerator:
         cell_arrays: Optional[list[str]] = None,
         hdf5_group: str = "",
         first_fields: Optional[list[str]] = None,
+        hdf5_reference: Optional[str] = None,
     ) -> None:
         """Describe actual stored types/shapes; retain the existing public API."""
         generator = XDMFGenerator(
-            hdf5_filepath, hdf5_group=hdf5_group, first_fields=first_fields
+            hdf5_filepath,
+            hdf5_group=hdf5_group,
+            first_fields=first_fields,
+            hdf5_reference=hdf5_reference,
         )
         generator._generate(
             output_filepath,

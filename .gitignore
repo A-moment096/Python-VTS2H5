@@ -46,17 +46,4 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
-# Data files
-*.h5
-*.xdmf*
-
-# Keep example data directory structure but ignore generated files
-!data/**/.gitkeep
-*.vts
-*.h5
-*.hdf5
-*.xdmf
-*.xmf
-
-# Keep example data
-!examples/**/*.vts
+data/

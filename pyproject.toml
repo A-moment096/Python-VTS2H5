@@ -1,7 +1,7 @@
 [project]
-name = "vts2h5"
-version = "1.1.0"
-description = "Convert VTK Structured Grid (VTS) files to HDF5 with XDMF3 descriptors"
+name = "vtk2h5"
+version = "1.2.0"
+description = "Convert serial VTK datasets to HDF5 with XDMF3 descriptors"
 authors = [
     {name = "AMoment", email = "amoment096@gmail.com"}
 ]
@@ -29,20 +29,22 @@ dependencies = [
 ]
 
 [project.scripts]
-vts2h5 = "vts2h5.cli:main"
+vtk2h5 = "vtk2h5.cli:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/vts2h5"]
+packages = ["src/vtk2h5"]
 
 [tool.hatch.build.targets.sdist]
 include = [
     "/src",
     "/README.md",
     "/docs",
+    "/scripts",
+    "/tests",
     "/LICENSE",
 ]
 
@@ -75,7 +77,7 @@ extend-exclude = '''
 
 [tool.pytest.ini_options]
 minversion = "7.0"
-addopts = "--cov=vts2h5 --cov-report=term-missing"
+addopts = "--cov=vtk2h5 --cov-report=term-missing"
 testpaths = ["tests"]
 
 [tool.ruff]
